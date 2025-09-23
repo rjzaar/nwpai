@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+##
+# Deploy to Linode using Vortex framework.
+#
+# This script provides deployment configuration for Linode infrastructure
+# using the Vortex Drupal project template.
+#
+
+set -eu
+
+# Linode deployment configuration
+VORTEX_DEPLOY_LINODE_HOST="${VORTEX_DEPLOY_LINODE_HOST:-}"
+VORTEX_DEPLOY_LINODE_USER="${VORTEX_DEPLOY_LINODE_USER:-root}"
+VORTEX_DEPLOY_LINODE_SSH_PORT="${VORTEX_DEPLOY_LINODE_SSH_PORT:-22}"
+VORTEX_DEPLOY_LINODE_SSH_KEY="${VORTEX_DEPLOY_LINODE_SSH_KEY:-${HOME}/.ssh/id_rsa}"
+VORTEX_DEPLOY_LINODE_WEBROOT="${VORTEX_DEPLOY_LINODE_WEBROOT:-/var/www/html}"
+VORTEX_DEPLOY_LINODE_DB_HOST="${VORTEX_DEPLOY_LINODE_DB_HOST:-localhost}"
+VORTEX_DEPLOY_LINODE_DB_NAME="${VORTEX_DEPLOY_LINODE_DB_NAME:-drupal}"
+VORTEX_DEPLOY_LINODE_DB_USER="${VORTEX_DEPLOY_LINODE_DB_USER:-drupal}"
+VORTEX_DEPLOY_LINODE_DB_PASS="${VORTEX_DEPLOY_LINODE_DB_PASS:-}"
+
+# Branch to deploy (default to current branch)
+VORTEX_DEPLOY_BRANCH="${VORTEX_DEPLOY_BRANCH:-$(git branch --show-current)}"
+
+# Build artifact before deployment
+VORTEX_DEPLOY_ARTIFACT_SKIP="${VORTEX_DEPLOY_ARTIFACT_SKIP:-0}"
+
+#-------------------------------------------------------------------------------
+# Variables (no need to change).
+#-------------------------------------------------------------------------------
+
+SCRIPT_NAME="Linode deployment"
+
+#-------------------------------------------------------------------------------
+# Functions.
+#-------------------------------------------------------------------------------
+
+deploy_linode() {
+  echo "==> Started ${SCRIPT_NAME}"
+  
+  # Validation
+  validate_requirements
+  
+  # Build artifact if not skipped
+  if [ "${VORTEX_DEPLOY_ARTIFACT_SKIP}" != "1" ]; then
+    echo "Building deployment artifact..."
+    ./scripts/vortex/deploy-artifact.sh
+  fi
+  
+  # Deploy to Linode
+  echo "Deploying to Linode server: ${VORTEX_DEPLOY_LINODE_HOST}"
+  
+  # Create deployment directory structure on remote server
+  setup_remote_directories
+  
+  # Upload artifact
+  upload_artifact
+  
+  # Install/update application on remote server
+  install_application
+  
+  # Run post-deployment tasks
+  post_deployment_tasks
+  
+  echo "==> Finished ${SCRIPT_NAME}"
+}
+
+validate_requirements() {
+  echo "Validating deployment requirements..."
+  
+  if [ -z "${VORTEX_DEPLOY_LINODE_HOST}" ]; then
+    echo "ERROR: VORTEX_DEPLOY_LINODE_HOST environment variable is not set"
+    exit 1
+  fi
+  
+  if [ ! -f "${VORTEX_DEPLOY_LINODE_SSH_KEY}" ]; then
+    echo "ERROR: SSH key not found at ${VORTEX_DEPLOY_LINODE_SSH_KEY}"
+    exit 1
+  fi
+  
+  if [ -z "${VORTEX_DEPLOY_LINODE_DB_PASS}" ]; then
+    echo "ERROR: VORTEX_DEPLOY_LINODE_DB_PASS environment variable is not set"
+    exit 1
+  fi
+  
+  # Test SSH connection
+  if ! ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+           -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+           -o ConnectTimeout=10 \
+           -o BatchMode=yes \
+           "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" \
+           "echo 'SSH connection test successful'"; then
+    echo "ERROR: Unable to establish SSH connection to Linode server"
+    exit 1
+  fi
+}
+
+setup_remote_directories() {
+  echo "Setting up remote directory structure..."
+  
+  ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+      -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+      "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" << 'EOF'
+    # Create webroot if it doesn't exist
+    sudo mkdir -p /var/www/html
+    sudo mkdir -p /var/www/html/releases
+    sudo mkdir -p /var/www/html/shared
+    sudo mkdir -p /var/www/html/shared/web/sites/default/files
+    
+    # Set permissions
+    sudo chown -R www-data:www-data /var/www/html
+    sudo chmod -R 755 /var/www/html
+EOF
+}
+
+upload_artifact() {
+  echo "Uploading deployment artifact..."
+  
+  # Generate timestamp for release directory
+  RELEASE_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+  RELEASE_DIR="/var/www/html/releases/${RELEASE_TIMESTAMP}"
+  
+  # Create release directory on remote server
+  ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+      -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+      "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" \
+      "sudo mkdir -p ${RELEASE_DIR}"
+  
+  # Upload artifact (assumes artifact is created in .vortex/deployment-artifact)
+  if [ -f ".vortex/deployment-artifact.tar.gz" ]; then
+    scp -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+        -P "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+        ".vortex/deployment-artifact.tar.gz" \
+        "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}:/tmp/"
+    
+    # Extract artifact on remote server
+    ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+        -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+        "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" \
+        "cd ${RELEASE_DIR} && sudo tar -xzf /tmp/deployment-artifact.tar.gz --strip-components=1"
+  else
+    echo "ERROR: Deployment artifact not found at .vortex/deployment-artifact.tar.gz"
+    exit 1
+  fi
+  
+  # Store release directory for later use
+  echo "${RELEASE_DIR}" > .vortex/deployment-release-dir
+}
+
+install_application() {
+  echo "Installing/updating application on remote server..."
+  
+  RELEASE_DIR=$(cat .vortex/deployment-release-dir)
+  
+  ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+      -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+      "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" << EOF
+    # Link shared files directory
+    sudo rm -rf ${RELEASE_DIR}/web/sites/default/files
+    sudo ln -sf /var/www/html/shared/web/sites/default/files ${RELEASE_DIR}/web/sites/default/files
+    
+    # Copy settings if they don't exist
+    if [ ! -f "/var/www/html/shared/web/sites/default/settings.local.php" ]; then
+      sudo cp ${RELEASE_DIR}/web/sites/default/settings.local.php /var/www/html/shared/web/sites/default/
+    fi
+    
+    # Link settings file
+    sudo ln -sf /var/www/html/shared/web/sites/default/settings.local.php ${RELEASE_DIR}/web/sites/default/settings.local.php
+    
+    # Install/update Composer dependencies in production mode
+    cd ${RELEASE_DIR}
+    sudo -u www-data composer install --no-dev --optimize-autoloader
+    
+    # Set proper permissions
+    sudo chown -R www-data:www-data ${RELEASE_DIR}
+    sudo chmod -R 755 ${RELEASE_DIR}
+    
+    # Update current symlink
+    sudo rm -f /var/www/html/current
+    sudo ln -sf ${RELEASE_DIR} /var/www/html/current
+    
+    # Update web server document root symlink
+    sudo rm -f ${VORTEX_DEPLOY_LINODE_WEBROOT}
+    sudo ln -sf /var/www/html/current/web ${VORTEX_DEPLOY_LINODE_WEBROOT}
+EOF
+}
+
+post_deployment_tasks() {
+  echo "Running post-deployment tasks..."
+  
+  RELEASE_DIR=$(cat .vortex/deployment-release-dir)
+  
+  ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+      -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+      "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" << EOF
+    cd ${RELEASE_DIR}
+    
+    # Clear Drupal caches
+    sudo -u www-data vendor/bin/drush cr
+    
+    # Run database updates
+    sudo -u www-data vendor/bin/drush updb -y
+    
+    # Import configuration
+    sudo -u www-data vendor/bin/drush cim -y
+    
+    # Clear caches again
+    sudo -u www-data vendor/bin/drush cr
+    
+    # Update search index (if using search_api)
+    sudo -u www-data vendor/bin/drush search-api:index || true
+EOF
+  
+  # Clean up old releases (keep last 5)
+  cleanup_old_releases
+  
+  # Clean up local deployment files
+  rm -f .vortex/deployment-release-dir
+}
+
+cleanup_old_releases() {
+  echo "Cleaning up old releases..."
+  
+  ssh -i "${VORTEX_DEPLOY_LINODE_SSH_KEY}" \
+      -p "${VORTEX_DEPLOY_LINODE_SSH_PORT}" \
+      "${VORTEX_DEPLOY_LINODE_USER}@${VORTEX_DEPLOY_LINODE_HOST}" << 'EOF'
+    cd /var/www/html/releases
+    # Keep only the 5 most recent releases
+    sudo ls -t | tail -n +6 | xargs -r sudo rm -rf
+EOF
+}
+
+#-------------------------------------------------------------------------------
+# Main entry point.
+#-------------------------------------------------------------------------------
+
+deploy_linode "$@"
