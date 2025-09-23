@@ -1,0 +1,456 @@
+# Updated pl.yml configuration file for Nginx and modern Drupal
+# Copy this to pl.yml and customize for your environment
+
+# System Configuration
+web_server: "nginx"  # Changed from apache2 to nginx
+php_version: "8.3"   # Updated for Drupal 11 compatibility
+hosts_path: "/etc/hosts"
+nginx_sites_path: "/etc/nginx/sites-available/"  # Changed from Apache
+nginx_enabled_path: "/etc/nginx/sites-enabled/"
+www_path: "/var/www/html"
+host_database: "mysql"
+mysql_version: "8.0"
+
+# SSL Configuration
+ssl_enabled: true
+ssl_provider: "letsencrypt"  # or "custom"
+ssl_email: "admin@example.com"
+
+# PHP-FPM Configuration
+php_fpm_socket: "/run/php/php8.3-fpm.sock"
+php_memory_limit: "512M"
+php_max_execution_time: "300"
+php_max_input_vars: "3000"
+php_upload_max_filesize: "100M"
+php_post_max_size: "100M"
+
+# Nginx Configuration
+nginx_worker_processes: "auto"
+nginx_worker_connections: "1024"
+nginx_client_max_body_size: "100M"
+nginx_gzip_enabled: true
+
+# Modern Drupal Versions
+drupal_versions:
+  d11: "drupal/recommended-project:^11.0"
+  d10: "drupal/recommended-project:^10.2"
+  d9: "drupal/recommended-project:^9.5"
+
+# Site Configurations
+sites:
+  # Drupal 11 site
+  d11:
+    type: "drupal"
+    version: "11"
+    profile: "standard"
+    database: "d11_db"
+    domain: "pleasy.d11"
+    webroot: "/var/www/html/d11/web"
+    composer_project: "drupal/recommended-project:^11.0"
+    php_version: "8.3"
+    
+  # Drupal 10 site  
+  d10:
+    type: "drupal"
+    version: "10"
+    profile: "standard"
+    database: "d10_db"
+    domain: "pleasy.d10"
+    webroot: "/var/www/html/d10/web"
+    composer_project: "drupal/recommended-project:^10.2"
+    php_version: "8.2"
+
+  # Modern Varbase site
+  varbase:
+    type: "varbase"
+    version: "10"
+    profile: "varbase"
+    database: "varbase_db"
+    domain: "pleasy.varbase"
+    webroot: "/var/www/html/varbase/web"
+    composer_project: "vardot/varbase-project:^10.0"
+    php_version: "8.2"
+
+# Production Server Configuration
+production:
+  enabled: true
+  method: "rsync"  # or "git" or "artifact"
+  host: "production.example.com"
+  user: "deploy"
+  ssh_port: 22
+  ssh_key: "~/.ssh/id_rsa"
+  webroot: "/var/www/html"
+  database:
+    host: "localhost"
+    user: "prod_user"
+    password: "secure_password"
+    name: "prod_database"
+
+# Development Tools
+tools:
+  composer: true
+  drush: true
+  drupal_console: false  # Deprecated for modern Drupal
+  node_version: "20"     # Updated Node.js version
+  npm: true
+  yarn: true
+  xdebug: true
+  redis: true
+
+# Performance & Caching
+cache:
+  redis:
+    enabled: true
+    host: "127.0.0.1"
+    port: 6379
+  varnish:
+    enabled: false
+    port: 6081
+
+# Backup Configuration
+backup:
+  enabled: true
+  retention_days: 30
+  storage_path: "${HOME}/pleasy/backups"
+  compression: "gzip"
+  exclude_patterns:
+    - "node_modules"
+    - ".git"
+    - "vendor"
+
+# Git Configuration
+git:
+  enabled: true
+  default_branch: "main"
+  auto_commit_config: true
+  remote_backup: true
+
+# Security
+security:
+  fail2ban: true
+  ufw: true
+  automatic_updates: true
+  strong_passwords: true
+
+# Monitoring
+monitoring:
+  enabled: true
+  log_level: "info"
+  error_reporting: true
+  performance_monitoring: false
+
+---
+
+# Updated installation script for modern systems
+#!/usr/bin/env bash
+##
+# Pleasy Modern Installation Script
+# Updated for Nginx, PHP 8.3, and Drupal 11 support
+##
+
+set -euo pipefail
+
+# Configuration
+PLEASY_DIR="${HOME}/pleasy"
+PHP_VERSION="8.3"
+NODE_VERSION="20"
+MYSQL_VERSION="8.0"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Logging functions
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Check if running as root
+check_root() {
+    if [[ $EUID -eq 0 ]]; then
+        log_error "This script should not be run as root"
+        exit 1
+    fi
+}
+
+# Update system packages
+update_system() {
+    log_info "Updating system packages..."
+    sudo apt update
+    sudo apt upgrade -y
+    sudo apt install -y software-properties-common apt-transport-https ca-certificates curl gnupg lsb-release
+}
+
+# Install PHP 8.3
+install_php() {
+    log_info "Installing PHP ${PHP_VERSION}..."
+    
+    # Add Ondrej's PHP repository
+    sudo add-apt-repository -y ppa:ondrej/php
+    sudo apt update
+    
+    # Install PHP and extensions
+    sudo apt install -y \
+        php${PHP_VERSION} \
+        php${PHP_VERSION}-fpm \
+        php${PHP_VERSION}-cli \
+        php${PHP_VERSION}-common \
+        php${PHP_VERSION}-mysql \
+        php${PHP_VERSION}-xml \
+        php${PHP_VERSION}-xmlrpc \
+        php${PHP_VERSION}-curl \
+        php${PHP_VERSION}-gd \
+        php${PHP_VERSION}-imagick \
+        php${PHP_VERSION}-dev \
+        php${PHP_VERSION}-mbstring \
+        php${PHP_VERSION}-opcache \
+        php${PHP_VERSION}-soap \
+        php${PHP_VERSION}-zip \
+        php${PHP_VERSION}-intl \
+        php${PHP_VERSION}-bcmath \
+        php${PHP_VERSION}-redis \
+        php${PHP_VERSION}-xdebug
+    
+    # Configure PHP-FPM
+    sudo sed -i "s/memory_limit = 128M/memory_limit = 512M/" /etc/php/${PHP_VERSION}/fpm/php.ini
+    sudo sed -i "s/max_execution_time = 30/max_execution_time = 300/" /etc/php/${PHP_VERSION}/fpm/php.ini
+    sudo sed -i "s/max_input_vars = 1000/max_input_vars = 3000/" /etc/php/${PHP_VERSION}/fpm/php.ini
+    sudo sed -i "s/post_max_size = 8M/post_max_size = 100M/" /etc/php/${PHP_VERSION}/fpm/php.ini
+    sudo sed -i "s/upload_max_filesize = 2M/upload_max_filesize = 100M/" /etc/php/${PHP_VERSION}/fpm/php.ini
+    
+    sudo systemctl enable php${PHP_VERSION}-fpm
+    sudo systemctl start php${PHP_VERSION}-fpm
+}
+
+# Install Nginx
+install_nginx() {
+    log_info "Installing Nginx..."
+    
+    sudo apt install -y nginx
+    
+    # Enable and start Nginx
+    sudo systemctl enable nginx
+    sudo systemctl start nginx
+    
+    # Remove default site
+    sudo rm -f /etc/nginx/sites-enabled/default
+    
+    log_success "Nginx installed and configured"
+}
+
+# Install MySQL 8.0
+install_mysql() {
+    log_info "Installing MySQL ${MYSQL_VERSION}..."
+    
+    sudo apt install -y mysql-server-${MYSQL_VERSION}
+    
+    # Secure MySQL installation
+    sudo mysql_secure_installation
+    
+    sudo systemctl enable mysql
+    sudo systemctl start mysql
+    
+    log_success "MySQL installed and secured"
+}
+
+# Install Node.js and npm
+install_nodejs() {
+    log_info "Installing Node.js ${NODE_VERSION}..."
+    
+    # Install NodeSource repository
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | sudo -E bash -
+    sudo apt install -y nodejs
+    
+    # Install global packages
+    sudo npm install -g npm@latest yarn
+    
+    log_success "Node.js and npm installed"
+}
+
+# Install Composer
+install_composer() {
+    log_info "Installing Composer..."
+    
+    # Download and install Composer
+    php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+    php -r "if (hash_file('sha384', 'composer-setup.php') === '$(wget -q -O - https://composer.github.io/installer.sig)') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); } echo PHP_EOL;"
+    php composer-setup.php
+    php -r "unlink('composer-setup.php');"
+    sudo mv composer.phar /usr/local/bin/composer
+    sudo chmod +x /usr/local/bin/composer
+    
+    log_success "Composer installed globally"
+}
+
+# Install Drush globally
+install_drush() {
+    log_info "Installing Drush..."
+    
+    composer global require drush/drush
+    
+    # Add Composer global bin to PATH if not already there
+    if ! echo $PATH | grep -q "${HOME}/.composer/vendor/bin"; then
+        echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> ~/.bashrc
+    fi
+    
+    log_success "Drush installed globally"
+}
+
+# Install Redis
+install_redis() {
+    log_info "Installing Redis..."
+    
+    sudo apt install -y redis-server
+    sudo systemctl enable redis-server
+    sudo systemctl start redis-server
+    
+    log_success "Redis installed and started"
+}
+
+# Create Nginx site template
+create_nginx_template() {
+    log_info "Creating Nginx site template..."
+    
+    sudo tee /etc/nginx/sites-available/pleasy-template > /dev/null << 'EOF'
+server {
+    listen 80;
+    server_name DOMAIN_PLACEHOLDER;
+    root WEBROOT_PLACEHOLDER;
+    index index.php index.html index.htm;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1000;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml+rss;
+
+    # Handle Drupal's clean URLs
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # Handle PHP files
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:PHP_SOCKET_PLACEHOLDER;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        
+        # Security
+        fastcgi_hide_header X-Powered-By;
+        fastcgi_read_timeout 300;
+    }
+
+    # Deny access to sensitive files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    location ~ ^/sites/.*/private/ {
+        deny all;
+    }
+
+    location ~ ^/sites/[^/]+/files/.*\.php$ {
+        deny all;
+    }
+
+    # Handle static files with caching
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+        log_not_found off;
+    }
+
+    # Drupal specific locations
+    location = /favicon.ico {
+        log_not_found off;
+        access_log off;
+    }
+
+    location = /robots.txt {
+        allow all;
+        log_not_found off;
+        access_log off;
+    }
+
+    # Protect configuration files
+    location ~ /\.(htaccess|htpasswd|yml|yaml|ini)$ {
+        deny all;
+    }
+}
+EOF
+    
+    log_success "Nginx template created"
+}
+
+# Setup pleasy directory structure
+setup_pleasy_structure() {
+    log_info "Setting up Pleasy directory structure..."
+    
+    mkdir -p "${PLEASY_DIR}"/{bin,scripts,config,backups,logs}
+    mkdir -p "${HOME}/.pleasy/sites"
+    
+    # Create pl command wrapper
+    cat > "${PLEASY_DIR}/bin/pl" << 'EOF'
+#!/bin/bash
+# Pleasy command wrapper for modern Drupal
+
+PLEASY_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+SCRIPT_PATH="${PLEASY_ROOT}/scripts"
+
+# Check if script exists
+if [[ -f "${SCRIPT_PATH}/$1.sh" ]]; then
+    bash "${SCRIPT_PATH}/$1.sh" "${@:2}"
+else
+    echo "Error: Script '$1' not found"
+    echo "Available scripts:"
+    ls "${SCRIPT_PATH}"/*.sh | xargs -n 1 basename | sed 's/\.sh$//' | sort
+fi
+EOF
+    
+    chmod +x "${PLEASY_DIR}/bin/pl"
+    
+    # Add pleasy to PATH
+    if ! echo $PATH | grep -q "${PLEASY_DIR}/bin"; then
+        echo "export PATH=\"${PLEASY_DIR}/bin:\$PATH\"" >> ~/.bashrc
+    fi
+    
+    log_success "Pleasy directory structure created"
+}
+
+# Main installation function
+main() {
+    log_info "Starting Pleasy modern installation..."
+    
+    check_root
+    update_system
+    install_php
+    install_nginx
+    install_mysql
+    install_nodejs
+    install_composer
+    install_drush
+    install_redis
+    create_nginx_template
+    setup_pleasy_structure
+    
+    log_success "Pleasy installation completed successfully!"
+    log_info "Please run 'source ~/.bashrc' or restart your terminal"
+    log_info "Then run 'pl init' to complete the setup"
+}
+
+# Run main function
+main "$@"
