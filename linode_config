@@ -1,0 +1,139 @@
+# .env.linode - Linode environment configuration
+# Copy this to .env.local and update with your actual values
+
+# Linode server configuration
+VORTEX_DEPLOY_LINODE_HOST=your-linode-server-ip-or-domain
+VORTEX_DEPLOY_LINODE_USER=root
+VORTEX_DEPLOY_LINODE_SSH_PORT=22
+VORTEX_DEPLOY_LINODE_SSH_KEY=/path/to/your/ssh/private/key
+VORTEX_DEPLOY_LINODE_WEBROOT=/var/www/html
+
+# Database configuration
+VORTEX_DEPLOY_LINODE_DB_HOST=localhost
+VORTEX_DEPLOY_LINODE_DB_NAME=drupal_prod
+VORTEX_DEPLOY_LINODE_DB_USER=drupal_user
+VORTEX_DEPLOY_LINODE_DB_PASS=your-secure-database-password
+
+# Deployment settings
+VORTEX_DEPLOY_TYPES=linode
+VORTEX_DEPLOY_BRANCH=main
+VORTEX_DEPLOY_ARTIFACT_SKIP=0
+
+# Drupal configuration
+DRUPAL_DB_HOST=${VORTEX_DEPLOY_LINODE_DB_HOST}
+DRUPAL_DB_NAME=${VORTEX_DEPLOY_LINODE_DB_NAME}
+DRUPAL_DB_USERNAME=${VORTEX_DEPLOY_LINODE_DB_USER}
+DRUPAL_DB_PASSWORD=${VORTEX_DEPLOY_LINODE_DB_PASS}
+DRUPAL_BASE_URL=https://your-domain.com
+
+---
+
+# .github/workflows/deploy-linode.yml - GitHub Actions deployment workflow
+name: Deploy to Linode
+
+on:
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, dom, filter, gd, hash, json, mbstring, pcre, pdo, session, simplexml, spl, tokenizer, xml
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        composer install --no-dev --optimize-autoloader
+        npm ci
+    
+    - name: Build assets
+      run: |
+        npm run build
+    
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.LINODE_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.LINODE_HOST }} >> ~/.ssh/known_hosts
+    
+    - name: Deploy to Linode
+      env:
+        VORTEX_DEPLOY_LINODE_HOST: ${{ secrets.LINODE_HOST }}
+        VORTEX_DEPLOY_LINODE_USER: ${{ secrets.LINODE_USER }}
+        VORTEX_DEPLOY_LINODE_DB_HOST: ${{ secrets.LINODE_DB_HOST }}
+        VORTEX_DEPLOY_LINODE_DB_NAME: ${{ secrets.LINODE_DB_NAME }}
+        VORTEX_DEPLOY_LINODE_DB_USER: ${{ secrets.LINODE_DB_USER }}
+        VORTEX_DEPLOY_LINODE_DB_PASS: ${{ secrets.LINODE_DB_PASS }}
+        VORTEX_DEPLOY_BRANCH: ${{ github.ref_name }}
+      run: |
+        chmod +x ./scripts/vortex/deploy-linode.sh
+        ./scripts/vortex/deploy-linode.sh
+
+---
+
+# docker-compose.linode.yml - Docker Compose for Linode deployment testing
+version: '3.8'
+
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./web:/var/www/html:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - php
+    restart: unless-stopped
+
+  php:
+    image: php:8.1-fpm-alpine
+    volumes:
+      - ./web:/var/www/html
+      - ./php.ini:/usr/local/etc/php/php.ini:ro
+    depends_on:
+      - db
+    restart: unless-stopped
+    environment:
+      - DRUPAL_DB_HOST=db
+      - DRUPAL_DB_NAME=${VORTEX_DEPLOY_LINODE_DB_NAME}
+      - DRUPAL_DB_USERNAME=${VORTEX_DEPLOY_LINODE_DB_USER}
+      - DRUPAL_DB_PASSWORD=${VORTEX_DEPLOY_LINODE_DB_PASS}
+
+  db:
+    image: mariadb:10.6
+    environment:
+      MYSQL_ROOT_PASSWORD: ${VORTEX_DEPLOY_LINODE_DB_PASS}
+      MYSQL_DATABASE: ${VORTEX_DEPLOY_LINODE_DB_NAME}
+      MYSQL_USER: ${VORTEX_DEPLOY_LINODE_DB_USER}
+      MYSQL_PASSWORD: ${VORTEX_DEPLOY_LINODE_DB_PASS}
+    volumes:
+      - db_data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  db_data:
