@@ -174,7 +174,7 @@ if ! is_step_complete 1; then
     sudo apt upgrade -y
     mark_step_complete 1
 else
-    print_info "Step 1: Already complete (System updated) - Skipping"
+    print_info "Step 1: Already complete - System updated - Skipping"
 fi
 
 ###############################################################################
