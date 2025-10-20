@@ -118,7 +118,12 @@ check_proxy_running() {
 }
 
 check_containers_running() {
-    [ -d "$INSTALL_DIR" ] && cd "$INSTALL_DIR" && docker-compose ps | grep -q "Up"
+    if [ -d "$INSTALL_DIR" ]; then
+        cd "$INSTALL_DIR"
+        docker-compose ps 2>/dev/null | grep -q "Up"
+        return $?
+    fi
+    return 1
 }
 
 check_hosts_configured() {
