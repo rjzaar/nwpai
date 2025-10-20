@@ -80,6 +80,9 @@ show_progress() {
             echo -e "  Step $i: ${YELLOW}⧗ Pending${NC}"
         fi
     done
+    if is_step_complete 7.5; then
+        echo -e "  Step 7.5: ${GREEN}✓ Complete${NC} (Environment configured)"
+    fi
     echo ""
 }
 
@@ -344,7 +347,139 @@ if ! is_step_complete 7; then
     print_step "Step 7: Starting Nginx proxy container..."
 
     # Check if proxy container already exists
-    if docker ps -a --format '{{.Names}}' | grep -q '^proxy$'; then
+    if docker ps -a --format '{{.Names}}' | grep -q '^proxy
+
+###############################################################################
+# Step 8: Build and Start Containers
+###############################################################################
+if ! is_step_complete 8; then
+    print_step "Step 8: Building and starting Docker containers..."
+    echo "This may take several minutes on first run..."
+
+    docker-compose up -d
+
+    echo "Waiting for containers to fully start..."
+    sleep 15
+
+    # Verify containers are running
+    echo -e "\nContainer status:"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+    
+    mark_step_complete 8
+else
+    print_info "Step 8: Already complete (Containers running) - Skipping"
+    # Ensure containers are up even if step was marked complete
+    if ! check_containers_running; then
+        print_warning "Containers are not running. Starting them..."
+        docker-compose up -d
+        sleep 10
+    fi
+fi
+
+###############################################################################
+# Step 9: Configure Hosts File
+###############################################################################
+if ! is_step_complete 9; then
+    print_step "Step 9: Configuring /etc/hosts file..."
+
+    HOSTS_ENTRIES="127.0.0.1 social.local
+127.0.0.1 mailcatcher.social.local
+127.0.0.1 solr.social.local"
+
+    # Check if entries already exist
+    if check_hosts_configured; then
+        print_info "Entries already exist in /etc/hosts"
+    else
+        echo "$HOSTS_ENTRIES" | sudo tee -a /etc/hosts > /dev/null
+        echo "Added entries to /etc/hosts"
+    fi
+    
+    mark_step_complete 9
+else
+    print_info "Step 9: Already complete (Hosts configured) - Skipping"
+fi
+
+###############################################################################
+# Step 10: Stop Cron Container
+###############################################################################
+if ! is_step_complete 10; then
+    print_step "Step 10: Stopping cron container for installation..."
+    
+    if docker ps --format '{{.Names}}' | grep -q '^social_cron$'; then
+        docker stop social_cron
+    else
+        print_info "Cron container not running or doesn't exist yet."
+    fi
+    
+    mark_step_complete 10
+else
+    print_info "Step 10: Already complete (Cron stopped) - Skipping"
+fi
+
+###############################################################################
+# Step 11: Run Installation Script
+###############################################################################
+if ! is_step_complete 11; then
+    print_step "Step 11: Running Open Social installation..."
+    echo "This will take 5-10 minutes. Please be patient..."
+
+    docker exec social_web bash /var/www/scripts/social/install/install_script.sh
+    
+    mark_step_complete 11
+else
+    print_info "Step 11: Already complete (Open Social installed) - Skipping"
+fi
+
+###############################################################################
+# Step 12: Start Cron Container
+###############################################################################
+if ! is_step_complete 12; then
+    print_step "Step 12: Starting all containers including cron..."
+    docker-compose up -d
+    
+    mark_step_complete 12
+else
+    print_info "Step 12: Already complete (All containers running) - Skipping"
+fi
+
+###############################################################################
+# Installation Complete
+###############################################################################
+echo ""
+echo "###############################################################################"
+echo -e "#${GREEN}                                                                             ${NC}#"
+echo -e "#${GREEN}                    Installation Complete!                                  ${NC}#"
+echo -e "#${GREEN}                                                                             ${NC}#"
+echo "###############################################################################"
+echo ""
+echo "Your Open Social site is ready!"
+echo ""
+echo "Access your site at:"
+echo "  Main site:    http://social.local"
+echo "  Mailcatcher:  http://mailcatcher.social.local"
+echo "  Solr admin:   http://solr.social.local"
+echo ""
+echo "Important next steps:"
+echo "  1. Visit http://social.local/admin/reports/status"
+echo "  2. Click 'Rebuild permissions' link"
+echo "  3. Change your admin password"
+echo ""
+echo "Useful commands:"
+echo "  View logs:           cd $INSTALL_DIR && docker-compose logs -f"
+echo "  Stop containers:     cd $INSTALL_DIR && docker-compose stop"
+echo "  Start containers:    cd $INSTALL_DIR && docker-compose start"
+echo "  Restart containers:  cd $INSTALL_DIR && docker-compose restart"
+echo "  Access web shell:    docker exec -it social_web bash"
+echo "  Run drush:           docker exec social_web drush status"
+echo ""
+echo "Script commands:"
+echo "  Check status:        $0 --status"
+echo "  Reset installation:  $0 --reset"
+echo ""
+echo "Installation directory: $INSTALL_DIR"
+echo "State file: $STATE_FILE"
+echo ""
+echo "###############################################################################"; then
         if check_proxy_running; then
             print_info "Proxy container is already running."
         else
@@ -363,6 +498,54 @@ if ! is_step_complete 7; then
     mark_step_complete 7
 else
     print_info "Step 7: Already complete (Nginx proxy running) - Skipping"
+fi
+
+###############################################################################
+# Step 7.5: Configure Environment Variables
+###############################################################################
+if ! is_step_complete 7.5; then
+    print_step "Step 7.5: Configuring environment variables..."
+    
+    ENV_FILE="$INSTALL_DIR/.env"
+    
+    if [ -f "$ENV_FILE" ]; then
+        print_info "Environment file already exists at $ENV_FILE"
+        read -p "Do you want to recreate it? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            mark_step_complete 7.5
+            print_info "Step 7.5: Using existing .env file - Skipping recreation"
+        else
+            rm "$ENV_FILE"
+        fi
+    fi
+    
+    if [ ! -f "$ENV_FILE" ]; then
+        cat > "$ENV_FILE" << 'EOF'
+# Project Configuration
+PROJECT_NAME=social
+PROJECT_BASE_URL=social.local
+
+# Database Configuration
+DRUPAL_DB_NAME=social
+DRUPAL_DB_USER=root
+DRUPAL_DB_PASS=root
+
+# PHP Configuration
+PHP_VERSION=8.1
+
+# Solr Configuration
+SOLR_CORE_NAME=drupal
+EOF
+        
+        print_info "Created .env file with default configuration"
+        echo "Contents:"
+        cat "$ENV_FILE"
+    fi
+    
+    mark_step_complete 7.5
+else
+    print_info "Step 7.5: Already complete (Environment configured) - Skipping"
 fi
 
 ###############################################################################
