@@ -1,8 +1,9 @@
 #!/bin/bash
 
 ###############################################################################
-# Open Social Docker Installation Script for Ubuntu
+# Open Social Docker Installation Script for Ubuntu (Resumable Version)
 # This script automates the complete installation of Open Social using Docker
+# with checkpoint support for resuming interrupted installations
 ###############################################################################
 
 set -e  # Exit on any error
@@ -11,11 +12,13 @@ set -e  # Exit on any error
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
 INSTALL_DIR="$HOME/Sites/social"
 GIT_REPO="https://github.com/goalgorilla/drupal_social.git"
+STATE_FILE="$HOME/.osinstall_state"
 
 # Functions
 print_step() {
@@ -28,6 +31,10 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}ERROR:${NC} $1"
+}
+
+print_info() {
+    echo -e "${BLUE}INFO:${NC} $1"
 }
 
 check_root() {
@@ -46,118 +53,264 @@ confirm_continue() {
     fi
 }
 
+# State management functions
+mark_step_complete() {
+    local step=$1
+    echo "$step" >> "$STATE_FILE"
+    print_info "Step $step marked as complete"
+}
+
+is_step_complete() {
+    local step=$1
+    if [ -f "$STATE_FILE" ]; then
+        grep -q "^$step$" "$STATE_FILE"
+        return $?
+    fi
+    return 1
+}
+
+show_progress() {
+    echo ""
+    echo "Installation Progress:"
+    echo "====================="
+    for i in {1..12}; do
+        if is_step_complete $i; then
+            echo -e "  Step $i: ${GREEN}✓ Complete${NC}"
+        else
+            echo -e "  Step $i: ${YELLOW}⧗ Pending${NC}"
+        fi
+    done
+    echo ""
+}
+
+reset_installation() {
+    if [ -f "$STATE_FILE" ]; then
+        rm "$STATE_FILE"
+        print_info "Installation state has been reset"
+    else
+        print_info "No previous installation state found"
+    fi
+}
+
+# Check if specific component is installed
+check_docker_installed() {
+    command -v docker &> /dev/null && docker --version &> /dev/null
+}
+
+check_git_installed() {
+    command -v git &> /dev/null
+}
+
+check_composer_installed() {
+    command -v composer &> /dev/null
+}
+
+check_repo_cloned() {
+    [ -d "$INSTALL_DIR/.git" ]
+}
+
+check_dependencies_installed() {
+    [ -d "$INSTALL_DIR/vendor" ]
+}
+
+check_proxy_running() {
+    docker ps --format '{{.Names}}' | grep -q '^proxy$'
+}
+
+check_containers_running() {
+    [ -d "$INSTALL_DIR" ] && cd "$INSTALL_DIR" && docker-compose ps | grep -q "Up"
+}
+
+check_hosts_configured() {
+    grep -q "social.local" /etc/hosts
+}
+
 # Start installation
 clear
 echo "###############################################################################"
 echo "#                                                                             #"
-echo "#           Open Social Docker Installation Script for Ubuntu                #"
+echo "#      Open Social Docker Installation Script for Ubuntu (Resumable)         #"
 echo "#                                                                             #"
 echo "###############################################################################"
 echo ""
-echo "This script will install:"
-echo "  - Docker and Docker Compose"
-echo "  - Git"
-echo "  - Composer"
-echo "  - Open Social with all dependencies"
-echo ""
-echo "Installation directory: $INSTALL_DIR"
-echo ""
+
+# Check for command line arguments
+if [ "$1" = "--reset" ]; then
+    echo "Resetting installation state..."
+    reset_installation
+    exit 0
+elif [ "$1" = "--status" ]; then
+    show_progress
+    exit 0
+elif [ "$1" = "--help" ]; then
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --reset     Reset installation state and start from beginning"
+    echo "  --status    Show current installation progress"
+    echo "  --help      Show this help message"
+    echo ""
+    exit 0
+fi
 
 check_root
+
+# Show current progress if resuming
+if [ -f "$STATE_FILE" ]; then
+    print_info "Resuming previous installation..."
+    show_progress
+else
+    echo "This script will install:"
+    echo "  - Docker and Docker Compose"
+    echo "  - Git"
+    echo "  - Composer"
+    echo "  - Open Social with all dependencies"
+    echo ""
+    echo "Installation directory: $INSTALL_DIR"
+    echo ""
+    echo "The installation is resumable. If interrupted, simply run this script again."
+    echo ""
+fi
+
 confirm_continue
 
 ###############################################################################
 # Step 1: Update System
 ###############################################################################
-print_step "Step 1: Updating system packages..."
-sudo apt update
-sudo apt upgrade -y
+if ! is_step_complete 1; then
+    print_step "Step 1: Updating system packages..."
+    sudo apt update
+    sudo apt upgrade -y
+    mark_step_complete 1
+else
+    print_info "Step 1: Already complete (System updated) - Skipping"
+fi
 
 ###############################################################################
 # Step 2: Install Docker
 ###############################################################################
-print_step "Step 2: Installing Docker..."
+if ! is_step_complete 2; then
+    print_step "Step 2: Installing Docker..."
+    
+    if check_docker_installed; then
+        print_info "Docker is already installed. Skipping installation."
+    else
+        # Remove old versions
+        sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
 
-# Remove old versions
-sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+        # Install dependencies
+        sudo apt install -y ca-certificates curl gnupg lsb-release
 
-# Install dependencies
-sudo apt install -y ca-certificates curl gnupg lsb-release
+        # Add Docker's GPG key
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+            sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-# Add Docker's GPG key
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-    sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        # Add Docker repository
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+          $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# Add Docker repository
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Install Docker
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
-
-# Add user to docker group
-sudo usermod -aG docker $USER
-
-# Verify Docker installation
-docker --version
-docker compose version
-
-print_warning "You may need to log out and log back in for Docker group changes to take effect."
-echo "Attempting to apply group changes..."
-newgrp docker <<EONG
+        # Install Docker
+        sudo apt update
+        sudo apt install -y docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin
+    fi
+    
+    # Add user to docker group (idempotent)
+    sudo usermod -aG docker $USER
+    
+    # Verify Docker installation
+    docker --version
+    docker compose version
+    
+    print_warning "Docker group changes may require logout/login to take effect."
+    
+    mark_step_complete 2
+else
+    print_info "Step 2: Already complete (Docker installed) - Skipping"
+fi
 
 ###############################################################################
 # Step 3: Install Git
 ###############################################################################
-print_step "Step 3: Installing Git..."
-sudo apt install -y git
+if ! is_step_complete 3; then
+    print_step "Step 3: Installing Git..."
+    
+    if check_git_installed; then
+        print_info "Git is already installed."
+    else
+        sudo apt install -y git
+    fi
 
-# Configure Git if not already configured
-if [ -z "$(git config --global user.name)" ]; then
-    read -p "Enter your Git name: " git_name
-    git config --global user.name "$git_name"
-fi
+    # Configure Git if not already configured
+    if [ -z "$(git config --global user.name)" ]; then
+        read -p "Enter your Git name: " git_name
+        git config --global user.name "$git_name"
+    fi
 
-if [ -z "$(git config --global user.email)" ]; then
-    read -p "Enter your Git email: " git_email
-    git config --global user.email "$git_email"
+    if [ -z "$(git config --global user.email)" ]; then
+        read -p "Enter your Git email: " git_email
+        git config --global user.email "$git_email"
+    fi
+    
+    mark_step_complete 3
+else
+    print_info "Step 3: Already complete (Git installed) - Skipping"
 fi
 
 ###############################################################################
 # Step 4: Install Composer
 ###############################################################################
-print_step "Step 4: Installing Composer..."
-cd /tmp
-curl -sS https://getcomposer.org/installer -o composer-setup.php
-sudo php composer-setup.php --install-dir=/usr/local/bin --filename=composer
-rm composer-setup.php
-composer --version
+if ! is_step_complete 4; then
+    print_step "Step 4: Installing Composer..."
+    
+    if check_composer_installed; then
+        print_info "Composer is already installed."
+        composer --version
+    else
+        cd /tmp
+        curl -sS https://getcomposer.org/installer -o composer-setup.php
+        sudo php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+        rm composer-setup.php
+        composer --version
+    fi
+    
+    mark_step_complete 4
+else
+    print_info "Step 4: Already complete (Composer installed) - Skipping"
+fi
 
 ###############################################################################
 # Step 5: Clone Open Social Repository
 ###############################################################################
-print_step "Step 5: Cloning Open Social repository..."
+if ! is_step_complete 5; then
+    print_step "Step 5: Cloning Open Social repository..."
 
-# Create parent directory if it doesn't exist
-mkdir -p "$(dirname "$INSTALL_DIR")"
+    # Create parent directory if it doesn't exist
+    mkdir -p "$(dirname "$INSTALL_DIR")"
 
-# Clone repository
-if [ -d "$INSTALL_DIR" ]; then
-    print_warning "Directory $INSTALL_DIR already exists."
-    read -p "Do you want to remove it and clone fresh? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        rm -rf "$INSTALL_DIR"
-        git clone "$GIT_REPO" "$INSTALL_DIR"
+    # Clone repository
+    if check_repo_cloned; then
+        print_info "Repository already cloned at $INSTALL_DIR"
+    elif [ -d "$INSTALL_DIR" ]; then
+        print_warning "Directory $INSTALL_DIR already exists but is not a git repository."
+        read -p "Do you want to remove it and clone fresh? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm -rf "$INSTALL_DIR"
+            git clone "$GIT_REPO" "$INSTALL_DIR"
+        else
+            print_error "Cannot proceed without a clean directory. Exiting."
+            exit 1
+        fi
     else
-        echo "Using existing directory..."
+        git clone "$GIT_REPO" "$INSTALL_DIR"
     fi
+    
+    mark_step_complete 5
 else
-    git clone "$GIT_REPO" "$INSTALL_DIR"
+    print_info "Step 5: Already complete (Repository cloned) - Skipping"
 fi
 
 cd "$INSTALL_DIR"
@@ -165,78 +318,145 @@ cd "$INSTALL_DIR"
 ###############################################################################
 # Step 6: Install Dependencies
 ###############################################################################
-print_step "Step 6: Installing PHP dependencies with Composer..."
-composer install
+if ! is_step_complete 6; then
+    print_step "Step 6: Installing PHP dependencies with Composer..."
+    
+    if check_dependencies_installed; then
+        print_info "Dependencies appear to be already installed."
+        read -p "Do you want to reinstall? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            composer install
+        fi
+    else
+        composer install
+    fi
+    
+    mark_step_complete 6
+else
+    print_info "Step 6: Already complete (Dependencies installed) - Skipping"
+fi
 
 ###############################################################################
 # Step 7: Start Nginx Proxy
 ###############################################################################
-print_step "Step 7: Starting Nginx proxy container..."
+if ! is_step_complete 7; then
+    print_step "Step 7: Starting Nginx proxy container..."
 
-# Check if proxy container already exists
-if docker ps -a --format '{{.Names}}' | grep -q '^proxy$'; then
-    print_warning "Proxy container already exists. Removing old container..."
-    docker rm -f proxy
+    # Check if proxy container already exists
+    if docker ps -a --format '{{.Names}}' | grep -q '^proxy$'; then
+        if check_proxy_running; then
+            print_info "Proxy container is already running."
+        else
+            print_info "Proxy container exists but is not running. Starting it..."
+            docker start proxy
+        fi
+    else
+        docker run -d -p 80:80 --name=proxy \
+            -v /var/run/docker.sock:/tmp/docker.sock:ro \
+            nginxproxy/nginx-proxy
+    fi
+
+    echo "Waiting for proxy to start..."
+    sleep 5
+    
+    mark_step_complete 7
+else
+    print_info "Step 7: Already complete (Nginx proxy running) - Skipping"
 fi
-
-docker run -d -p 80:80 --name=proxy \
-    -v /var/run/docker.sock:/tmp/docker.sock:ro \
-    nginxproxy/nginx-proxy
-
-echo "Waiting for proxy to start..."
-sleep 5
 
 ###############################################################################
 # Step 8: Build and Start Containers
 ###############################################################################
-print_step "Step 8: Building and starting Docker containers..."
-echo "This may take several minutes on first run..."
+if ! is_step_complete 8; then
+    print_step "Step 8: Building and starting Docker containers..."
+    echo "This may take several minutes on first run..."
 
-docker-compose up -d
+    docker-compose up -d
 
-echo "Waiting for containers to fully start..."
-sleep 15
+    echo "Waiting for containers to fully start..."
+    sleep 15
 
-# Verify containers are running
-echo -e "\nContainer status:"
-docker ps --format "table {{.Names}}\t{{.Status}}"
+    # Verify containers are running
+    echo -e "\nContainer status:"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+    
+    mark_step_complete 8
+else
+    print_info "Step 8: Already complete (Containers running) - Skipping"
+    # Ensure containers are up even if step was marked complete
+    if ! check_containers_running; then
+        print_warning "Containers are not running. Starting them..."
+        docker-compose up -d
+        sleep 10
+    fi
+fi
 
 ###############################################################################
 # Step 9: Configure Hosts File
 ###############################################################################
-print_step "Step 9: Configuring /etc/hosts file..."
+if ! is_step_complete 9; then
+    print_step "Step 9: Configuring /etc/hosts file..."
 
-HOSTS_ENTRIES="127.0.0.1 social.local
+    HOSTS_ENTRIES="127.0.0.1 social.local
 127.0.0.1 mailcatcher.social.local
 127.0.0.1 solr.social.local"
 
-# Check if entries already exist
-if grep -q "social.local" /etc/hosts; then
-    print_warning "Entries already exist in /etc/hosts"
+    # Check if entries already exist
+    if check_hosts_configured; then
+        print_info "Entries already exist in /etc/hosts"
+    else
+        echo "$HOSTS_ENTRIES" | sudo tee -a /etc/hosts > /dev/null
+        echo "Added entries to /etc/hosts"
+    fi
+    
+    mark_step_complete 9
 else
-    echo "$HOSTS_ENTRIES" | sudo tee -a /etc/hosts > /dev/null
-    echo "Added entries to /etc/hosts"
+    print_info "Step 9: Already complete (Hosts configured) - Skipping"
 fi
 
 ###############################################################################
 # Step 10: Stop Cron Container
 ###############################################################################
-print_step "Step 10: Stopping cron container for installation..."
-docker stop social_cron
+if ! is_step_complete 10; then
+    print_step "Step 10: Stopping cron container for installation..."
+    
+    if docker ps --format '{{.Names}}' | grep -q '^social_cron$'; then
+        docker stop social_cron
+    else
+        print_info "Cron container not running or doesn't exist yet."
+    fi
+    
+    mark_step_complete 10
+else
+    print_info "Step 10: Already complete (Cron stopped) - Skipping"
+fi
 
 ###############################################################################
 # Step 11: Run Installation Script
 ###############################################################################
-print_step "Step 11: Running Open Social installation..."
-echo "This will take 5-10 minutes. Please be patient..."
+if ! is_step_complete 11; then
+    print_step "Step 11: Running Open Social installation..."
+    echo "This will take 5-10 minutes. Please be patient..."
 
-docker exec social_web bash /var/www/scripts/social/install/install_script.sh
+    docker exec social_web bash /var/www/scripts/social/install/install_script.sh
+    
+    mark_step_complete 11
+else
+    print_info "Step 11: Already complete (Open Social installed) - Skipping"
+fi
 
 ###############################################################################
 # Step 12: Start Cron Container
 ###############################################################################
-print_step "Step 12: Starting all containers including cron..."
-docker-compose up -d
+if ! is_step_complete 12; then
+    print_step "Step 12: Starting all containers including cron..."
+    docker-compose up -d
+    
+    mark_step_complete 12
+else
+    print_info "Step 12: Already complete (All containers running) - Skipping"
+fi
 
 ###############################################################################
 # Installation Complete
@@ -268,16 +488,11 @@ echo "  Restart containers:  cd $INSTALL_DIR && docker-compose restart"
 echo "  Access web shell:    docker exec -it social_web bash"
 echo "  Run drush:           docker exec social_web drush status"
 echo ""
+echo "Script commands:"
+echo "  Check status:        $0 --status"
+echo "  Reset installation:  $0 --reset"
+echo ""
 echo "Installation directory: $INSTALL_DIR"
+echo "State file: $STATE_FILE"
 echo ""
 echo "###############################################################################"
-
-EONG
-
-# If newgrp didn't work, show a message
-if [ $? -ne 0 ]; then
-    print_warning "Could not apply Docker group changes automatically."
-    echo "Please log out and log back in, then run:"
-    echo "  cd $INSTALL_DIR"
-    echo "  docker-compose up -d"
-fi
