@@ -73,7 +73,8 @@ show_progress() {
     echo ""
     echo "Installation Progress:"
     echo "====================="
-    for i in {1..13}; do
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
         if is_step_complete $i; then
             echo -e "  Step $i: ${GREEN}✓ Complete${NC}"
         else
@@ -114,7 +115,7 @@ check_dependencies_installed() {
 }
 
 check_proxy_running() {
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^proxy
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^proxy'
 
 # Start installation
 clear
@@ -335,7 +336,7 @@ if ! is_step_complete 7; then
     print_step "Step 7: Starting Nginx proxy container..."
 
     # Check if proxy container already exists
-    if docker ps -a --format '{{.Names}}' | grep -q '^proxy
+    if docker ps -a --format '{{.Names}}' | grep -q '^proxy'
 
 ###############################################################################
 # Step 8: Build and Start Containers
@@ -902,7 +903,7 @@ if ! is_step_complete 7; then
     print_step "Step 7: Starting Nginx proxy container..."
 
     # Check if proxy container already exists
-    if docker ps -a --format '{{.Names}}' | grep -q '^proxy
+    if docker ps -a --format '{{.Names}}' | grep -q '^proxy'
 
 ###############################################################################
 # Step 8: Build and Start Containers
