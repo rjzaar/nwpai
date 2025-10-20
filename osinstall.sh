@@ -73,16 +73,13 @@ show_progress() {
     echo ""
     echo "Installation Progress:"
     echo "====================="
-    for i in {1..12}; do
+    for i in {1..13}; do
         if is_step_complete $i; then
             echo -e "  Step $i: ${GREEN}✓ Complete${NC}"
         else
             echo -e "  Step $i: ${YELLOW}⧗ Pending${NC}"
         fi
     done
-    if is_step_complete 7.5; then
-        echo -e "  Step 7.5: ${GREEN}✓ Complete${NC} (Environment configured)"
-    fi
     echo ""
 }
 
