@@ -75,7 +75,7 @@ show_progress() {
     echo "====================="
     local i
     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-        if is_step_complete $i; then
+        if is_step_complete "$i"; then
             echo -e "  Step $i: ${GREEN}✓ Complete${NC}"
         else
             echo -e "  Step $i: ${YELLOW}⧗ Pending${NC}"
@@ -454,10 +454,10 @@ echo "  2. Click 'Rebuild permissions' link"
 echo "  3. Change your admin password"
 echo ""
 echo "Useful commands:"
-echo "  View logs:           cd $INSTALL_DIR && docker-compose logs -f"
-echo "  Stop containers:     cd $INSTALL_DIR && docker-compose stop"
-echo "  Start containers:    cd $INSTALL_DIR && docker-compose start"
-echo "  Restart containers:  cd $INSTALL_DIR && docker-compose restart"
+echo "  View logs:           cd $INSTALL_DIR && docker compose logs -f"
+echo "  Stop containers:     cd $INSTALL_DIR && docker compose stop"
+echo "  Start containers:    cd $INSTALL_DIR && docker compose start"
+echo "  Restart containers:  cd $INSTALL_DIR && docker compose restart"
 echo "  Access web shell:    docker exec -it social_web bash"
 echo "  Run drush:           docker exec social_web drush status"
 echo ""
