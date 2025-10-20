@@ -208,6 +208,9 @@ if ! is_step_complete 2; then
         sudo apt install -y docker-ce docker-ce-cli containerd.io \
             docker-buildx-plugin docker-compose-plugin
     fi
+
+    # Create the docker group
+    newgrp docker
     
     # Add user to docker group (idempotent)
     sudo usermod -aG docker $USER
