@@ -415,7 +415,7 @@ if ! is_step_complete 11; then
     print_step "Step 11: Running Open Social installation..."
     echo "This will take 5-10 minutes. Please be patient..."
 
-    docker exec social_web bash /var/www/scripts/social/install/install_script.sh
+    docker exec social_web bash /var/www/scripts/social/install/install_script.sh -s -d
     
     mark_step_complete 11
 else
