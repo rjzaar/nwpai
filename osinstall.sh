@@ -14,6 +14,25 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Function to wrap steps with clear headers
+step_header() {
+    local step_num=$1
+    local step_name=$2
+    echo ""
+    echo "============================================"
+    echo "STEP $step_num: $step_name"
+    echo "============================================"
+}
+
+step_complete() {
+    local step_num=$1
+    local step_name=$2
+    echo ""
+    print_status "✓ STEP $step_num COMPLETE: $step_name"
+    echo "============================================"
+    echo ""
+}
+
 # Function to print colored output
 print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -129,9 +148,34 @@ print_status "Starting OpenSocial installation with DDEV"
 print_status "Project name: $PROJECT_NAME"
 print_status "OpenSocial version: $OPENSOCIAL_VERSION"
 print_status "Note: Use 'dev-master' for latest, or specific versions like '12.4.13', '13.0.0-beta1'"
+echo ""
+echo "╔════════════════════════════════════════════╗"
+echo "║   OpenSocial DDEV Installation Script     ║"
+echo "║                                            ║"
+echo "║   Steps to be executed:                    ║"
+echo "║   [1] System Prerequisites                 ║"
+echo "║   [2] DDEV & Docker                        ║"
+echo "║   [3] mkcert (HTTPS)                       ║"
+echo "║   [4] Project Directory                    ║"
+echo "║   [5] DDEV Configuration                   ║"
+echo "║   [6] Start DDEV                           ║"
+echo "║   [7] Install via Composer                 ║"
+echo "║   [8] Install Drupal/OpenSocial            ║"
+echo "║   [9] Configure Site Settings              ║"
+echo "║   [10] Enable Modules                      ║"
+echo "║   [11] User & Content Settings             ║"
+echo "║   [12] Cache & Permissions                 ║"
+echo "║   [13] Development Settings                ║"
+echo "║   [14] Summary & Completion                ║"
+echo "╚════════════════════════════════════════════╝"
+echo ""
 
 # Step 1: Install prerequisites
 if ! should_skip_step 1 && ask_step 1 "Install system prerequisites"; then
+    echo ""
+    echo "============================================"
+    echo "STEP 1: Install System Prerequisites"
+    echo "============================================"
     print_status "Checking system prerequisites..."
     
     # Check if packages are already installed
@@ -152,12 +196,21 @@ if ! should_skip_step 1 && ask_step 1 "Install system prerequisites"; then
         sudo apt-get install -y "${PACKAGES_TO_INSTALL[@]}"
         print_status "System prerequisites installed successfully"
     fi
+    
+    echo ""
+    print_status "✓ STEP 1 COMPLETE: System prerequisites ready"
+    echo "============================================"
+    echo ""
 else
     print_skip "Skipping system prerequisites installation"
 fi
 
 # Step 2: Install DDEV and Docker if not already installed
 if ! should_skip_step 2 && ask_step 2 "Install DDEV and Docker"; then
+    echo ""
+    echo "============================================"
+    echo "STEP 2: Install DDEV and Docker"
+    echo "============================================"
     print_status "Checking for DDEV installation..."
 
     if ! command -v ddev &> /dev/null; then
@@ -184,8 +237,32 @@ if ! should_skip_step 2 && ask_step 2 "Install DDEV and Docker"; then
             
             # Add current user to docker group
             sudo usermod -aG docker $USER
-            print_warning "Added $USER to docker group. You may need to log out and back in for this to take effect."
-            print_status "Docker installed successfully"
+            print_status "✓ Docker installed successfully: $(docker --version)"
+            
+            # Activate docker group for current session
+            print_warning "Added $USER to docker group."
+            print_warning "Attempting to activate docker group for this session..."
+            
+            # Try to activate the group in the current session
+            if command -v newgrp &> /dev/null; then
+                print_status "You may need to run: newgrp docker"
+            fi
+            
+            echo ""
+            print_error "============================================"
+            print_error "IMPORTANT: Docker Group Change"
+            print_error "============================================"
+            print_error "Docker has been installed and your user added to the docker group."
+            print_error "However, you need to activate this change by doing ONE of:"
+            print_error ""
+            print_error "Option 1 (Recommended): Log out and log back in"
+            print_error "Option 2: Run this command, then re-run this script:"
+            print_error "          newgrp docker"
+            print_error "Option 3: Reboot your system"
+            print_error ""
+            print_error "After doing one of the above, re-run this installation script."
+            print_error "============================================"
+            exit 0
         else
             print_skip "Docker is already installed: $(docker --version)"
         fi
@@ -193,10 +270,49 @@ if ! should_skip_step 2 && ask_step 2 "Install DDEV and Docker"; then
         # Install DDEV
         print_status "Installing DDEV..."
         curl -fsSL https://ddev.com/install.sh | bash
-        print_status "DDEV installed successfully"
+        print_status "✓ DDEV installed successfully: $(ddev version | head -n 1)"
     else
         print_skip "DDEV is already installed: $(ddev version | head -n 1)"
     fi
+    
+    # Check if user can access Docker (test for permission issue)
+    print_status "Verifying Docker permissions..."
+    if ! docker ps >/dev/null 2>&1; then
+        print_error "============================================"
+        print_error "Docker Permission Error Detected"
+        print_error "============================================"
+        print_error "You don't have permission to access Docker."
+        print_error ""
+        print_error "Current user: $USER"
+        print_error "Docker group membership:"
+        groups | grep docker || echo "  NOT in docker group"
+        print_error ""
+        print_error "FIX THIS ISSUE:"
+        print_error ""
+        print_error "1. Add yourself to the docker group:"
+        print_error "   sudo usermod -aG docker $USER"
+        print_error ""
+        print_error "2. Activate the change (choose ONE):"
+        print_error "   Option A: Log out and log back in (RECOMMENDED)"
+        print_error "   Option B: Run: newgrp docker"
+        print_error "             Then re-run this script"
+        print_error "   Option C: Reboot your system"
+        print_error ""
+        print_error "3. Verify it works:"
+        print_error "   docker ps"
+        print_error ""
+        print_error "4. Re-run this installation script"
+        print_error "============================================"
+        exit 1
+    else
+        print_status "✓ Docker permissions are correct"
+        print_status "✓ Successfully connected to Docker daemon"
+    fi
+    
+    echo ""
+    print_status "✓ STEP 2 COMPLETE: DDEV and Docker ready"
+    echo "============================================"
+    echo ""
 else
     print_skip "Skipping DDEV and Docker installation"
 fi
@@ -505,6 +621,7 @@ fi
 
 # Step 6: Start DDEV
 if ! should_skip_step 6 && ask_step 6 "Start DDEV containers"; then
+    step_header 6 "Start DDEV Containers"
     # Check if DDEV is already running
     if ddev describe >/dev/null 2>&1 && ddev status 2>&1 | grep -q "running"; then
         print_skip "DDEV is already running for this project"
@@ -513,6 +630,7 @@ if ! should_skip_step 6 && ask_step 6 "Start DDEV containers"; then
         ddev start
         print_status "DDEV started successfully"
     fi
+    step_complete 6 "DDEV is running"
 else
     print_skip "Skipping DDEV start"
 fi
@@ -820,6 +938,7 @@ fi
 
 # Step 9: Configure site settings
 if ! should_skip_step 9 && ask_step 9 "Configure site settings"; then
+    step_header 9 "Configure Site Settings"
     print_status "Configuring site settings..."
 
     # Set timezone
@@ -846,7 +965,7 @@ if ! should_skip_step 9 && ask_step 9 "Configure site settings"; then
     # Note: automated_cron.settings doesn't exist in OpenSocial by default
     # Cron is configured through DDEV or system cron instead
     
-    print_status "Site settings configured successfully"
+    step_complete 9 "Site settings configured"
 else
     print_skip "Skipping site settings configuration"
 fi
