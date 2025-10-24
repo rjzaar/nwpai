@@ -1,959 +1,1115 @@
 #!/bin/bash
 
-###############################################################################
-# Open Social Docker Installation Script for Ubuntu (Interactive Version)
-# This script allows users to select which installation steps to execute
-# Uses actual verification instead of state files
-###############################################################################
+################################################################################
+# OpenSocial (Drupal) Installation Script with DDEV on Ubuntu
+# This script automates the installation of OpenSocial using DDEV
+################################################################################
 
-# Don't exit on errors during verification
-# set -e  # Removed to allow verification functions to fail gracefully
+set -e  # Exit on any error
 
-# Colors for output
+# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-INSTALL_DIR="$HOME/Sites/social"
-GIT_REPO="https://github.com/goalgorilla/drupal_social.git"
-
-# Step selection array
-declare -A STEP_SELECTED
-
-# Functions
-print_step() {
-    echo -e "\n${GREEN}==>${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}WARNING:${NC} $1"
+# Function to print colored output
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
 }
 
 print_error() {
-    echo -e "${RED}ERROR:${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1"
 }
 
-print_info() {
-    echo -e "${BLUE}INFO:${NC} $1"
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-check_root() {
-    if [ "$EUID" -eq 0 ]; then 
-        print_error "Please do not run this script as root or with sudo"
+print_skip() {
+    echo -e "${BLUE}[SKIP]${NC} $1"
+}
+
+# Interactive mode flag
+INTERACTIVE_MODE=false
+SKIP_STEPS=()
+
+# Function to check if a step should be skipped
+should_skip_step() {
+    local step_num=$1
+    for skip in "${SKIP_STEPS[@]}"; do
+        if [ "$skip" == "$step_num" ]; then
+            return 0  # Should skip
+        fi
+    done
+    return 1  # Should not skip
+}
+
+# Function to ask user if they want to run a step
+ask_step() {
+    local step_num=$1
+    local step_name=$2
+    
+    if [ "$INTERACTIVE_MODE" = true ]; then
+        echo ""
+        echo -e "${BLUE}Step $step_num: $step_name${NC}"
+        read -p "Do you want to run this step? (Y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            SKIP_STEPS+=("$step_num")
+            return 1  # Skip
+        fi
+    fi
+    return 0  # Run
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--interactive)
+            INTERACTIVE_MODE=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [OPTIONS] [PROJECT_NAME] [OPENSOCIAL_VERSION]"
+            echo ""
+            echo "Options:"
+            echo "  -i, --interactive    Run in interactive mode (choose which steps to run)"
+            echo "  -h, --help          Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0                                    # Run all steps automatically (dev-master)"
+            echo "  $0 -i                                 # Run in interactive mode"
+            echo "  $0 my-site                            # Custom project name (dev-master)"
+            echo "  $0 my-site 12.4.13                    # Custom project name and specific version"
+            echo "  $0 my-site 13.0.0-beta1               # Install beta version"
+            echo "  $0 -i my-site                         # Interactive with custom name"
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Check if running on Ubuntu
+if [ ! -f /etc/os-release ]; then
+    print_error "Cannot determine OS. This script is designed for Ubuntu."
+    exit 1
+fi
+
+source /etc/os-release
+if [[ ! "$ID" == "ubuntu" ]]; then
+    print_warning "This script is designed for Ubuntu. Your OS: $ID"
+    read -p "Do you want to continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         exit 1
     fi
-}
+fi
 
-confirm_continue() {
-    read -p "Do you want to continue? (Y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
-    fi
-}
+# Configuration variables
+PROJECT_NAME="${1:-opensocial}"
+OPENSOCIAL_VERSION="${2:-dev-master}"  # Use dev-master for latest, or specific version like 12.4.13
+PHP_VERSION="8.2"
+MYSQL_VERSION="8.0"
+NODEJS_VERSION="18"
 
-###############################################################################
-# Verification Functions - Check if steps are actually complete
-###############################################################################
+# Site configuration defaults
+SITE_NAME="OpenSocial Community"
+SITE_MAIL="admin@example.com"
+ADMIN_USER="admin"
+ADMIN_PASS="admin"
+ADMIN_MAIL="admin@example.com"
+DEFAULT_COUNTRY="US"
+SITE_TIMEZONE="America/New_York"
 
-# Step 1: Check if system is updated (check if apt lists are recent)
-verify_step_1() {
-    # Check if apt lists are less than 24 hours old
-    if [ -f "/var/lib/apt/periodic/update-success-stamp" ]; then
-        local last_update=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || echo 0)
-        local current_time=$(date +%s)
-        local time_diff=$((current_time - last_update))
-        # If updated within last 24 hours (86400 seconds)
-        [ $time_diff -lt 86400 ]
-        return $?
-    fi
-    return 1
-}
+print_status "Starting OpenSocial installation with DDEV"
+print_status "Project name: $PROJECT_NAME"
+print_status "OpenSocial version: $OPENSOCIAL_VERSION"
+print_status "Note: Use 'dev-master' for latest, or specific versions like '12.4.13', '13.0.0-beta1'"
 
-# Step 2: Check if Docker is installed and user is in docker group
-verify_step_2() {
-    command -v docker > /dev/null 2>&1 && \
-    docker --version > /dev/null 2>&1 && \
-    groups 2>/dev/null | grep -q docker
-    return $?
-}
-
-# Step 3: Check if Git is installed and configured
-verify_step_3() {
-    command -v git > /dev/null 2>&1 && \
-    [ -n "$(git config --global user.name 2>/dev/null)" ] && \
-    [ -n "$(git config --global user.email 2>/dev/null)" ]
-    return $?
-}
-
-# Step 4: Check if Composer is installed
-verify_step_4() {
-    command -v composer > /dev/null 2>&1
-    return $?
-}
-
-# Step 5: Check if repository is cloned
-verify_step_5() {
-    [ -d "$INSTALL_DIR/.git" ] && \
-    [ -d "$INSTALL_DIR" ]
-    return $?
-}
-
-# Step 6: Check if dependencies are installed
-verify_step_6() {
-    [ -d "$INSTALL_DIR/vendor" ] && \
-    [ -f "$INSTALL_DIR/vendor/autoload.php" ]
-    return $?
-}
-
-# Step 7: Check if proxy container is running
-verify_step_7() {
-    if ! command -v docker > /dev/null 2>&1; then
-        return 1
-    fi
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^proxy$' && \
-    docker ps --format '{{.Names}}\t{{.Status}}' 2>/dev/null | grep '^proxy' | grep -q 'Up'
-    return $?
-}
-
-# Step 8: Check if .env file exists
-verify_step_8() {
-    [ -f "$INSTALL_DIR/.env" ]
-    return $?
-}
-
-# Step 9: Check if containers are built and running
-verify_step_9() {
-    if [ ! -d "$INSTALL_DIR" ] || ! command -v docker > /dev/null 2>&1; then
-        return 1
-    fi
-    cd "$INSTALL_DIR" 2>/dev/null || return 1
-    # Check if docker-compose.yml exists and containers are running
-    [ -f "docker-compose.yml" ] && \
-    docker-compose ps 2>/dev/null | grep -q "Up"
-    return $?
-}
-
-# Step 10: Check if hosts file is configured
-verify_step_10() {
-    grep -q "social.local" /etc/hosts 2>/dev/null
-    return $?
-}
-
-# Step 11: Check if cron container is stopped (we want it stopped for installation)
-verify_step_11() {
-    if ! command -v docker > /dev/null 2>&1; then
-        return 1
-    fi
-    # This step is transient - we check if it's NOT running or doesn't exist
-    ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^social_cron$'
-    return $?
-}
-
-# Step 12: Check if Open Social is installed (check for installed marker or database)
-verify_step_12() {
-    if ! command -v docker > /dev/null 2>&1; then
-        return 1
-    fi
-    # Check if social_web container exists and Drupal is installed
-    docker exec social_web drush status --field=bootstrap 2>/dev/null | grep -q "Successful" || \
-    docker exec social_web test -f /var/www/html/sites/default/settings.php 2>/dev/null
-    return $?
-}
-
-# Step 13: Check if all containers including cron are running
-verify_step_13() {
-    if [ ! -d "$INSTALL_DIR" ] || ! command -v docker > /dev/null 2>&1; then
-        return 1
-    fi
-    cd "$INSTALL_DIR" 2>/dev/null || return 1
-    # Check if all expected containers are up
-    docker-compose ps 2>/dev/null | grep -q "Up" && \
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'social_cron'
-    return $?
-}
-
-show_progress() {
-    echo ""
-    echo "Installation Progress:"
-    echo "====================="
+# Step 1: Install prerequisites
+if ! should_skip_step 1 && ask_step 1 "Install system prerequisites"; then
+    print_status "Checking system prerequisites..."
     
-    if verify_step_1; then
-        echo -e "  Step 1: ${GREEN}✓ Complete${NC} - System packages updated"
-    else
-        echo -e "  Step 1: ${YELLOW}⧗ Pending${NC} - System packages need updating"
-    fi
+    # Check if packages are already installed
+    PACKAGES_TO_INSTALL=()
+    PACKAGES="ca-certificates curl gnupg lsb-release libnss3-tools apt-transport-https software-properties-common"
     
-    if verify_step_2; then
-        echo -e "  Step 2: ${GREEN}✓ Complete${NC} - Docker installed"
-    else
-        echo -e "  Step 2: ${YELLOW}⧗ Pending${NC} - Docker needs installation"
-    fi
-    
-    if verify_step_3; then
-        echo -e "  Step 3: ${GREEN}✓ Complete${NC} - Git installed and configured"
-    else
-        echo -e "  Step 3: ${YELLOW}⧗ Pending${NC} - Git needs installation"
-    fi
-    
-    if verify_step_4; then
-        echo -e "  Step 4: ${GREEN}✓ Complete${NC} - Composer installed"
-    else
-        echo -e "  Step 4: ${YELLOW}⧗ Pending${NC} - Composer needs installation"
-    fi
-    
-    if verify_step_5; then
-        echo -e "  Step 5: ${GREEN}✓ Complete${NC} - Repository cloned"
-    else
-        echo -e "  Step 5: ${YELLOW}⧗ Pending${NC} - Repository needs cloning"
-    fi
-    
-    if verify_step_6; then
-        echo -e "  Step 6: ${GREEN}✓ Complete${NC} - Dependencies installed"
-    else
-        echo -e "  Step 6: ${YELLOW}⧗ Pending${NC} - Dependencies need installation"
-    fi
-    
-    if verify_step_7; then
-        echo -e "  Step 7: ${GREEN}✓ Complete${NC} - Nginx proxy running"
-    else
-        echo -e "  Step 7: ${YELLOW}⧗ Pending${NC} - Nginx proxy needs setup"
-    fi
-    
-    if verify_step_8; then
-        echo -e "  Step 8: ${GREEN}✓ Complete${NC} - Environment configured"
-    else
-        echo -e "  Step 8: ${YELLOW}⧗ Pending${NC} - Environment needs configuration"
-    fi
-    
-    if verify_step_9; then
-        echo -e "  Step 9: ${GREEN}✓ Complete${NC} - Containers built and running"
-    else
-        echo -e "  Step 9: ${YELLOW}⧗ Pending${NC} - Containers need building"
-    fi
-    
-    if verify_step_10; then
-        echo -e "  Step 10: ${GREEN}✓ Complete${NC} - Hosts file configured"
-    else
-        echo -e "  Step 10: ${YELLOW}⧗ Pending${NC} - Hosts file needs configuration"
-    fi
-    
-    if verify_step_11; then
-        echo -e "  Step 11: ${GREEN}✓ Complete${NC} - Cron container stopped"
-    else
-        echo -e "  Step 11: ${YELLOW}⧗ Pending${NC} - Cron container needs stopping"
-    fi
-    
-    if verify_step_12; then
-        echo -e "  Step 12: ${GREEN}✓ Complete${NC} - Open Social installed"
-    else
-        echo -e "  Step 12: ${YELLOW}⧗ Pending${NC} - Open Social needs installation"
-    fi
-    
-    if verify_step_13; then
-        echo -e "  Step 13: ${GREEN}✓ Complete${NC} - All containers running"
-    else
-        echo -e "  Step 13: ${YELLOW}⧗ Pending${NC} - All containers need starting"
-    fi
-    
-    echo ""
-    read -p "Press Enter to continue..."
-}
-
-# Interactive step selection menu
-show_step_menu() {
-    clear
-    echo "###############################################################################"
-    echo "#                                                                             #"
-    echo "#      Open Social Installation - Step Selection                             #"
-    echo "#                                                                             #"
-    echo "###############################################################################"
-    echo ""
-    echo "Select which steps to execute (Enter number to toggle, 'a' for all, 'n' for none):"
-    echo ""
-    
-    local steps=(
-        "1:Update System Packages"
-        "2:Install Docker"
-        "3:Install Git"
-        "4:Install Composer"
-        "5:Clone Open Social Repository"
-        "6:Install PHP Dependencies"
-        "7:Start Nginx Proxy"
-        "8:Configure Environment Variables"
-        "9:Build and Start Containers"
-        "10:Configure Hosts File"
-        "11:Stop Cron Container"
-        "12:Run Installation Script"
-        "13:Start All Containers"
-    )
-    
-    local verify_funcs=(verify_step_1 verify_step_2 verify_step_3 verify_step_4 verify_step_5 verify_step_6 verify_step_7 verify_step_8 verify_step_9 verify_step_10 verify_step_11 verify_step_12 verify_step_13)
-    
-    local idx=0
-    for step_info in "${steps[@]}"; do
-        IFS=':' read -r num desc <<< "$step_info"
-        local status="[ ]"
-        local color="$NC"
-        
-        # Check if step is already complete via verification
-        if ${verify_funcs[$idx]} 2>/dev/null; then
-            status="[✓]"
-            color="$GREEN"
-        # Check if step is selected for execution (override complete status if selected)
-        elif [ "${STEP_SELECTED[$num]}" = "true" ]; then
-            status="[X]"
-            color="$YELLOW"
+    for pkg in $PACKAGES; do
+        if ! dpkg -l | grep -q "^ii  $pkg"; then
+            PACKAGES_TO_INSTALL+=("$pkg")
         fi
-        
-        # Show selection status if not complete
-        if [ "${STEP_SELECTED[$num]}" = "true" ] && [ "$status" != "[✓]" ]; then
-            status="[X]"
-            color="$YELLOW"
-        fi
-        
-        echo -e "  ${color}${status}${NC} ${num}. ${desc}"
-        ((idx++)) || true
     done
     
-    echo ""
-    echo "  [a] Select all steps"
-    echo "  [n] Deselect all steps"
-    echo "  [s] Show status of completed steps"
-    echo "  [c] Continue with selected steps"
-    echo "  [q] Quit"
-    echo ""
-}
-
-toggle_step() {
-    local step=$1
-    if [ "${STEP_SELECTED[$step]}" = "true" ]; then
-        STEP_SELECTED[$step]="false"
+    if [ ${#PACKAGES_TO_INSTALL[@]} -eq 0 ]; then
+        print_skip "All system prerequisites are already installed"
     else
-        STEP_SELECTED[$step]="true"
+        print_status "Installing missing packages: ${PACKAGES_TO_INSTALL[*]}"
+        sudo apt-get update
+        sudo apt-get install -y "${PACKAGES_TO_INSTALL[@]}"
+        print_status "System prerequisites installed successfully"
     fi
-}
+else
+    print_skip "Skipping system prerequisites installation"
+fi
 
-select_all_steps() {
-    for num in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-        STEP_SELECTED[$num]="true"
-    done
-}
+# Step 2: Install DDEV and Docker if not already installed
+if ! should_skip_step 2 && ask_step 2 "Install DDEV and Docker"; then
+    print_status "Checking for DDEV installation..."
 
-deselect_all_steps() {
-    for num in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-        STEP_SELECTED[$num]="false"
-    done
-}
-
-interactive_menu() {
-    while true; do
-        show_step_menu
-        read -p "Your choice: " choice
+    if ! command -v ddev &> /dev/null; then
+        print_status "DDEV not found. Installing DDEV..."
         
-        case "$choice" in
-            1|2|3|4|5|6|7|8|9|10|11|12|13)
-                toggle_step "$choice"
-                ;;
-            a|A)
-                select_all_steps
-                ;;
-            n|N)
-                deselect_all_steps
-                ;;
-            s|S)
-                show_progress
-                ;;
-            c|C)
-                # Check if any steps are selected
-                local has_selection=false
-                for num in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-                    if [ "${STEP_SELECTED[$num]}" = "true" ]; then
-                        has_selection=true
-                        break
-                    fi
-                done
-                
-                if [ "$has_selection" = "false" ]; then
-                    echo ""
-                    print_warning "No steps selected. Please select at least one step."
-                    read -p "Press Enter to continue..."
-                else
-                    break
-                fi
-                ;;
-            q|Q)
-                echo "Installation cancelled."
-                exit 0
-                ;;
-            *)
-                ;;
-        esac
-    done
-}
-
-# Check for command line arguments
-if [ "$1" = "--status" ]; then
-    show_progress
-    exit 0
-elif [ "$1" = "--help" ]; then
-    echo "Usage: $0 [OPTIONS]"
-    echo ""
-    echo "Options:"
-    echo "  --status    Show current installation progress"
-    echo "  --help      Show this help message"
-    echo ""
-    exit 0
-fi
-
-check_root
-
-###############################################################################
-# Check current installation status
-###############################################################################
-clear
-echo "###############################################################################"
-echo "#                                                                             #"
-echo "#      Checking Installation Status...                                       #"
-echo "#                                                                             #"
-echo "###############################################################################"
-echo ""
-
-print_step "Checking which steps have been completed..."
-echo ""
-
-echo "Step Status:"
-echo "------------"
-
-if verify_step_1; then
-    echo -e "  ${GREEN}✓${NC} Step 1: System packages updated"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 1: System packages need updating"
-fi
-
-if verify_step_2; then
-    echo -e "  ${GREEN}✓${NC} Step 2: Docker installed"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 2: Docker needs installation"
-fi
-
-if verify_step_3; then
-    echo -e "  ${GREEN}✓${NC} Step 3: Git installed and configured"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 3: Git needs installation"
-fi
-
-if verify_step_4; then
-    echo -e "  ${GREEN}✓${NC} Step 4: Composer installed"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 4: Composer needs installation"
-fi
-
-if verify_step_5; then
-    echo -e "  ${GREEN}✓${NC} Step 5: Repository cloned"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 5: Repository needs cloning"
-fi
-
-if verify_step_6; then
-    echo -e "  ${GREEN}✓${NC} Step 6: PHP dependencies installed"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 6: Dependencies need installation"
-fi
-
-if verify_step_7; then
-    echo -e "  ${GREEN}✓${NC} Step 7: Nginx proxy running"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 7: Nginx proxy needs setup"
-fi
-
-if verify_step_8; then
-    echo -e "  ${GREEN}✓${NC} Step 8: Environment variables configured"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 8: Environment needs configuration"
-fi
-
-if verify_step_9; then
-    echo -e "  ${GREEN}✓${NC} Step 9: Docker containers built and started"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 9: Containers need building"
-fi
-
-if verify_step_10; then
-    echo -e "  ${GREEN}✓${NC} Step 10: Hosts file configured"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 10: Hosts file needs configuration"
-fi
-
-if verify_step_11; then
-    echo -e "  ${GREEN}✓${NC} Step 11: Cron container stopped for installation"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 11: Cron container needs stopping"
-fi
-
-if verify_step_12; then
-    echo -e "  ${GREEN}✓${NC} Step 12: Open Social installed"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 12: Open Social needs installation"
-fi
-
-if verify_step_13; then
-    echo -e "  ${GREEN}✓${NC} Step 13: All containers started"
-else
-    echo -e "  ${YELLOW}⧗${NC} Step 13: All containers need starting"
-fi
-
-echo ""
-echo "Legend: ${GREEN}✓${NC} Complete  ${YELLOW}⧗${NC} Pending"
-echo ""
-read -p "Press Enter to continue to step selection menu..."
-
-# Initialize step selection with smart defaults
-for num in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-    # By default, select steps that are not yet complete
-    verify_func="verify_step_${num}"
-    if $verify_func 2>/dev/null; then
-        STEP_SELECTED[$num]="false"
-    else
-        STEP_SELECTED[$num]="true"
-    fi
-done
-
-# Show interactive menu
-interactive_menu
-
-# Confirmation before proceeding
-clear
-echo "###############################################################################"
-echo "#                                                                             #"
-echo "#      Ready to Execute Selected Steps                                       #"
-echo "#                                                                             #"
-echo "###############################################################################"
-echo ""
-echo "The following steps will be executed:"
-echo ""
-
-for num in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-    if [ "${STEP_SELECTED[$num]}" = "true" ]; then
-        echo -e "  ${GREEN}✓${NC} Step $num"
-    fi
-done
-
-echo ""
-echo "Installation directory: $INSTALL_DIR"
-echo ""
-read -p "Continue with installation? (Y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Nn]$ ]]; then
-    echo "Installation cancelled."
-    exit 0
-fi
-
-###############################################################################
-# Execute selected steps
-###############################################################################
-
-###############################################################################
-# Step 1: Update System
-###############################################################################
-if [ "${STEP_SELECTED[1]}" = "true" ]; then
-    if ! verify_step_1; then
-        print_step "Step 1: Updating system packages..."
-        sudo apt update
-        sudo apt upgrade -y
-        print_info "Step 1 complete"
-    else
-        print_info "Step 1: Already complete (System updated) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 2: Install Docker
-###############################################################################
-if [ "${STEP_SELECTED[2]}" = "true" ]; then
-    if ! verify_step_2; then
-        print_step "Step 2: Installing Docker..."
-        
-        if ! command -v docker > /dev/null 2>&1; then
-            # Remove old versions
-            sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-
-            # Install dependencies
-            sudo apt install -y ca-certificates curl gnupg lsb-release
-
-            # Add Docker's GPG key
+        # Install Docker if not present
+        if ! command -v docker &> /dev/null; then
+            print_status "Installing Docker..."
+            
+            # Add Docker's official GPG key
             sudo mkdir -p /etc/apt/keyrings
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-                sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-            # Add Docker repository
+            if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            fi
+            
+            # Set up Docker repository
             echo \
               "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
               $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-            # Install Docker
-            sudo apt update
-            sudo apt install -y docker-ce docker-ce-cli containerd.io \
-                docker-buildx-plugin docker-compose-plugin
-        else
-            print_info "Docker is already installed."
-        fi
-        
-        # Create the docker group
-        sudo groupadd docker 2>/dev/null || true
-        
-        # Add user to docker group (idempotent)
-        sudo usermod -aG docker $USER
-        
-        # Verify Docker installation
-        docker --version
-        docker compose version
-        
-        print_warning "Docker group changes may require logout/login to take effect."
-        print_info "Step 2 complete"
-    else
-        print_info "Step 2: Already complete (Docker installed) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 3: Install Git
-###############################################################################
-if [ "${STEP_SELECTED[3]}" = "true" ]; then
-    if ! verify_step_3; then
-        print_step "Step 3: Installing Git..."
-        
-        if ! command -v git > /dev/null 2>&1; then
-            sudo apt install -y git
-        else
-            print_info "Git is already installed."
-        fi
-
-        # Configure Git if not already configured
-        if [ -z "$(git config --global user.name 2>/dev/null)" ]; then
-            read -p "Enter your Git name: " git_name
-            git config --global user.name "$git_name"
-        fi
-
-        if [ -z "$(git config --global user.email 2>/dev/null)" ]; then
-            read -p "Enter your Git email: " git_email
-            git config --global user.email "$git_email"
-        fi
-        
-        print_info "Step 3 complete"
-    else
-        print_info "Step 3: Already complete (Git installed) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 4: Install Composer
-###############################################################################
-if [ "${STEP_SELECTED[4]}" = "true" ]; then
-    if ! verify_step_4; then
-        print_step "Step 4: Installing Composer..."
-        
-        if command -v composer > /dev/null 2>&1; then
-            print_info "Composer is already installed."
-            composer --version
-        else
-            cd /tmp
-            curl -sS https://getcomposer.org/installer -o composer-setup.php
-            sudo php composer-setup.php --install-dir=/usr/local/bin --filename=composer
-            rm composer-setup.php
-            composer --version
-        fi
-        
-        print_info "Step 4 complete"
-    else
-        print_info "Step 4: Already complete (Composer installed) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 5: Clone Open Social Repository
-###############################################################################
-if [ "${STEP_SELECTED[5]}" = "true" ]; then
-    if ! verify_step_5; then
-        print_step "Step 5: Cloning Open Social repository..."
-
-        # Create parent directory if it doesn't exist
-        mkdir -p "$(dirname "$INSTALL_DIR")"
-
-        # Clone repository
-        if [ -d "$INSTALL_DIR/.git" ]; then
-            print_info "Repository already cloned at $INSTALL_DIR"
-        elif [ -d "$INSTALL_DIR" ]; then
-            print_warning "Directory $INSTALL_DIR already exists but is not a git repository."
-            read -p "Do you want to remove it and clone fresh? (Y/n) " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Nn]$ ]]; then
-                print_error "Cannot proceed without a clean directory. Exiting."
-                exit 1
-            else
-                rm -rf "$INSTALL_DIR"
-                git clone "$GIT_REPO" "$INSTALL_DIR"
-            fi
-        else
-            git clone "$GIT_REPO" "$INSTALL_DIR"
-        fi
-        
-        print_info "Step 5 complete"
-    else
-        print_info "Step 5: Already complete (Repository cloned) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 6: Install Dependencies
-###############################################################################
-if [ "${STEP_SELECTED[6]}" = "true" ]; then
-    if ! verify_step_6; then
-        cd "$INSTALL_DIR"
-        print_step "Step 6: Installing PHP dependencies with Composer..."
-        
-        if [ -d "$INSTALL_DIR/vendor" ]; then
-            print_info "Dependencies appear to be already installed."
-            read -p "Do you want to reinstall? (Y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                composer install
-            fi
-        else
-            composer install
-        fi
-        
-        print_info "Step 6 complete"
-    else
-        print_info "Step 6: Already complete (Dependencies installed) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 7: Start Nginx Proxy
-###############################################################################
-if [ "${STEP_SELECTED[7]}" = "true" ]; then
-    if ! verify_step_7; then
-        print_step "Step 7: Starting Nginx proxy container..."
-
-        # Check if proxy container already exists
-        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^proxy$'; then
-            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^proxy$'; then
-                print_info "Proxy container is already running."
-            else
-                print_info "Proxy container exists but is not running. Starting it..."
-                docker start proxy
-            fi
-        else
-            docker run -d -p 80:80 --name=proxy \
-                -v /var/run/docker.sock:/tmp/docker.sock:ro \
-                nginxproxy/nginx-proxy
-        fi
-
-        echo "Waiting for proxy to start..."
-        sleep 5
-        
-        print_info "Step 7 complete"
-    else
-        print_info "Step 7: Already complete (Nginx proxy running) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 8: Configure Environment Variables
-###############################################################################
-if [ "${STEP_SELECTED[8]}" = "true" ]; then
-    if ! verify_step_8; then
-        cd "$INSTALL_DIR"
-        print_step "Step 8: Configuring environment variables..."
-        
-        ENV_FILE="$INSTALL_DIR/.env"
-        
-        if [ -f "$ENV_FILE" ]; then
-            print_info "Environment file already exists at $ENV_FILE"
-            read -p "Do you want to recreate it? (Y/n) " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Nn]$ ]]; then
-                print_info "Step 8: Using existing .env file - Skipping recreation"
-            else
-                rm "$ENV_FILE"
-            fi
-        fi
-        
-        if [ ! -f "$ENV_FILE" ]; then
-            cat > "$ENV_FILE" << 'EOF'
-# Project Configuration
-PROJECT_NAME=social
-PROJECT_BASE_URL=social.local
-
-# Database Configuration
-DRUPAL_DB_NAME=social
-DRUPAL_DB_USER=root
-DRUPAL_DB_PASS=root
-
-# PHP Configuration
-PHP_VERSION=8.1
-
-# Solr Configuration
-SOLR_CORE_NAME=drupal
-EOF
             
-            print_info "Created .env file with default configuration"
-            echo "Contents:"
-            cat "$ENV_FILE"
-        fi
-        
-        print_info "Step 8 complete"
-    else
-        print_info "Step 8: Already complete (Environment configured) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 9: Build and Start Containers
-###############################################################################
-if [ "${STEP_SELECTED[9]}" = "true" ]; then
-    if ! verify_step_9; then
-        cd "$INSTALL_DIR"
-        print_step "Step 9: Building and starting Docker containers..."
-        echo "This may take several minutes on first run..."
-
-        docker-compose up -d
-
-        echo "Waiting for containers to fully start..."
-        sleep 15
-
-        # Verify containers are running
-        echo -e "\nContainer status:"
-        docker ps --format "table {{.Names}}\t{{.Status}}"
-        
-        print_info "Step 9 complete"
-    else
-        print_info "Step 9: Already complete (Containers running) - Skipping"
-    fi
-fi
-
-###############################################################################
-# Step 10: Configure Hosts File
-###############################################################################
-if [ "${STEP_SELECTED[10]}" = "true" ]; then
-    if ! verify_step_10; then
-        print_step "Step 10: Configuring /etc/hosts file..."
-
-        HOSTS_ENTRIES="127.0.0.1 social.local
-127.0.0.1 mailcatcher.social.local
-127.0.0.1 solr.social.local"
-
-        # Check if entries already exist
-        if grep -q "social.local" /etc/hosts 2>/dev/null; then
-            print_info "Entries already exist in /etc/hosts"
+            # Install Docker Engine
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            
+            # Add current user to docker group
+            sudo usermod -aG docker $USER
+            print_warning "Added $USER to docker group. You may need to log out and back in for this to take effect."
+            print_status "Docker installed successfully"
         else
-            echo "$HOSTS_ENTRIES" | sudo tee -a /etc/hosts > /dev/null
-            echo "Added entries to /etc/hosts"
+            print_skip "Docker is already installed: $(docker --version)"
         fi
         
-        print_info "Step 10 complete"
+        # Install DDEV
+        print_status "Installing DDEV..."
+        curl -fsSL https://ddev.com/install.sh | bash
+        print_status "DDEV installed successfully"
     else
-        print_info "Step 10: Already complete (Hosts configured) - Skipping"
+        print_skip "DDEV is already installed: $(ddev version | head -n 1)"
     fi
+else
+    print_skip "Skipping DDEV and Docker installation"
 fi
 
-###############################################################################
-# Step 11: Stop Cron Container
-###############################################################################
-if [ "${STEP_SELECTED[11]}" = "true" ]; then
-    if ! verify_step_11; then
-        print_step "Step 11: Stopping cron container for installation..."
+# Step 3: Install and configure mkcert for HTTPS
+if ! should_skip_step 3 && ask_step 3 "Install and configure mkcert for HTTPS"; then
+    print_status "Setting up mkcert for local HTTPS..."
+
+    if ! command -v mkcert &> /dev/null; then
+        print_status "Installing mkcert..."
         
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^social_cron'; then
-            docker stop social_cron
+        # Install mkcert using the official installation method
+        curl -fsSL https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64 -o mkcert
+        chmod +x mkcert
+        sudo mv mkcert /usr/local/bin/
+        
+        print_status "mkcert installed successfully"
+    else
+        print_skip "mkcert is already installed: $(mkcert -version)"
+    fi
+
+    # Check if CA is already installed
+    if [ ! -d "$(mkcert -CAROOT)" ] || [ ! -f "$(mkcert -CAROOT)/rootCA.pem" ]; then
+        print_status "Installing local CA certificates..."
+        mkcert -install
+        print_status "Local CA certificates installed at $(mkcert -CAROOT)"
+    else
+        print_skip "Local CA certificates already installed at $(mkcert -CAROOT)"
+    fi
+
+    # DDEV will automatically detect and use mkcert if it's installed
+    print_status "DDEV will automatically use mkcert for HTTPS certificates"
+else
+    print_skip "Skipping mkcert installation and configuration"
+fi
+
+# Step 4: Create project directory
+if ! should_skip_step 4 && ask_step 4 "Create project directory"; then
+    if [ -d "$PROJECT_NAME" ]; then
+        print_warning "Project directory '$PROJECT_NAME' already exists"
+        
+        # Check if it's a DDEV project
+        if [ -f "$PROJECT_NAME/.ddev/config.yaml" ]; then
+            # Check if the config file is corrupted
+            if ! ddev describe >/dev/null 2>&1 && grep -q "already defined" "$PROJECT_NAME/.ddev/config.yaml" 2>/dev/null; then
+                print_error "Detected corrupted DDEV configuration (duplicate keys in config.yaml)"
+                echo "Options:"
+                echo "  1) Fix configuration (remove duplicate keys)"
+                echo "  2) Delete .ddev directory and reconfigure"
+                echo "  3) Delete entire project and start fresh"
+                echo "  4) Exit"
+                read -p "Choose an option (1-4): " -n 1 -r
+                echo
+                
+                case $REPLY in
+                    1)
+                        print_status "Attempting to fix configuration..."
+                        cd "$PROJECT_NAME"
+                        # Backup the corrupted config
+                        cp .ddev/config.yaml .ddev/config.yaml.backup
+                        # Remove lines after the first occurrence of duplicate keys
+                        # This is a simple fix - removes everything after line 300
+                        head -n 50 .ddev/config.yaml > .ddev/config.yaml.tmp
+                        mv .ddev/config.yaml.tmp .ddev/config.yaml
+                        print_status "Configuration fixed. Backup saved as config.yaml.backup"
+                        ;;
+                    2)
+                        print_status "Removing .ddev directory..."
+                        cd "$PROJECT_NAME"
+                        rm -rf .ddev
+                        print_status ".ddev directory removed. Will reconfigure."
+                        ;;
+                    3)
+                        print_warning "This will DELETE all data in $PROJECT_NAME"
+                        read -p "Are you absolutely sure? Type 'yes' to confirm: " confirmation
+                        if [ "$confirmation" == "yes" ]; then
+                            print_status "Deleting directory..."
+                            rm -rf "$PROJECT_NAME"
+                            print_status "Creating fresh project directory..."
+                            mkdir -p "$PROJECT_NAME"
+                            cd "$PROJECT_NAME"
+                        else
+                            print_error "Deletion cancelled. Exiting."
+                            exit 1
+                        fi
+                        ;;
+                    4)
+                        print_status "Exiting..."
+                        exit 0
+                        ;;
+                    *)
+                        print_error "Invalid option. Exiting."
+                        exit 1
+                        ;;
+                esac
+            else
+                print_status "This appears to be an existing DDEV project"
+                
+                # Detect which step failed or needs to be redone
+                cd "$PROJECT_NAME"
+                LAST_FAILED_STEP=""
+                LAST_FAILED_STEP_NAME=""
+                
+                # Check various installation states
+                if [ ! -f "composer.json" ]; then
+                    LAST_FAILED_STEP="7"
+                    LAST_FAILED_STEP_NAME="Install OpenSocial via Composer"
+                elif ! ddev drush version >/dev/null 2>&1; then
+                    LAST_FAILED_STEP="7"
+                    LAST_FAILED_STEP_NAME="Install Drush"
+                elif ! ddev drush status --fields=bootstrap 2>/dev/null | grep -q "Successful"; then
+                    LAST_FAILED_STEP="8"
+                    LAST_FAILED_STEP_NAME="Install Drupal/OpenSocial database"
+                elif [ -f "html/sites/default/settings.php" ] && ! grep -q "file_private_path" html/sites/default/settings.php; then
+                    LAST_FAILED_STEP="8"
+                    LAST_FAILED_STEP_NAME="Configure private file path"
+                elif ! ddev drush pml --status=enabled 2>/dev/null | grep -q "social_user"; then
+                    LAST_FAILED_STEP="10"
+                    LAST_FAILED_STEP_NAME="Enable recommended modules"
+                fi
+                
+                cd ..
+                
+                echo "Options:"
+                if [ -n "$LAST_FAILED_STEP" ]; then
+                    echo "  1) Resume from last failed/incomplete step: Step $LAST_FAILED_STEP ($LAST_FAILED_STEP_NAME)"
+                else
+                    echo "  1) Continue with existing project (resume installation)"
+                fi
+                echo "  2) Delete and start fresh"
+                echo "  3) Choose a different project name"
+                echo "  4) Exit"
+                read -p "Choose an option (1-4): " -n 1 -r
+                echo
+                
+                case $REPLY in
+                    1)
+                        if [ -n "$LAST_FAILED_STEP" ]; then
+                            print_status "Resuming from Step $LAST_FAILED_STEP: $LAST_FAILED_STEP_NAME"
+                            cd "$PROJECT_NAME"
+                            # Add the failed step to skip list so we DON'T skip it
+                            # but skip all steps before it
+                            for ((i=1; i<$LAST_FAILED_STEP; i++)); do
+                                SKIP_STEPS+=("$i")
+                            done
+                        else
+                            print_status "Continuing with existing project..."
+                            cd "$PROJECT_NAME"
+                        fi
+                        ;;
+                    2)
+                        print_warning "This will DELETE all data in $PROJECT_NAME"
+                        read -p "Are you absolutely sure? Type 'yes' to confirm: " confirmation
+                        if [ "$confirmation" == "yes" ]; then
+                            print_status "Stopping DDEV if running..."
+                            cd "$PROJECT_NAME"
+                            ddev stop 2>/dev/null || true
+                            ddev delete -O 2>/dev/null || true
+                            cd ..
+                            print_status "Deleting directory..."
+                            rm -rf "$PROJECT_NAME"
+                            print_status "Creating fresh project directory..."
+                            mkdir -p "$PROJECT_NAME"
+                            cd "$PROJECT_NAME"
+                        else
+                            print_error "Deletion cancelled. Exiting."
+                            exit 1
+                        fi
+                        ;;
+                    3)
+                        read -p "Enter new project name: " NEW_PROJECT_NAME
+                        if [ -z "$NEW_PROJECT_NAME" ]; then
+                            print_error "Project name cannot be empty. Exiting."
+                            exit 1
+                        fi
+                        PROJECT_NAME="$NEW_PROJECT_NAME"
+                        print_status "Using new project name: $PROJECT_NAME"
+                        if [ -d "$PROJECT_NAME" ]; then
+                            print_error "Directory $PROJECT_NAME also exists. Please run the script again with a unique name."
+                            exit 1
+                        fi
+                        mkdir -p "$PROJECT_NAME"
+                        cd "$PROJECT_NAME"
+                        ;;
+                    4)
+                        print_status "Exiting..."
+                        exit 0
+                        ;;
+                    *)
+                        print_error "Invalid option. Exiting."
+                        exit 1
+                        ;;
+                esac
+            fi
         else
-            print_info "Cron container not running or doesn't exist yet."
+            # Directory exists but is not a DDEV project
+            print_warning "Directory exists but is not a DDEV project"
+            echo "Options:"
+            echo "  1) Use this directory (will initialize DDEV in it)"
+            echo "  2) Delete directory and start fresh"
+            echo "  3) Choose a different project name"
+            echo "  4) Exit"
+            read -p "Choose an option (1-4): " -n 1 -r
+            echo
+            
+            case $REPLY in
+                1)
+                    print_status "Using existing directory..."
+                    cd "$PROJECT_NAME"
+                    ;;
+                2)
+                    print_warning "This will DELETE all data in $PROJECT_NAME"
+                    read -p "Are you absolutely sure? Type 'yes' to confirm: " confirmation
+                    if [ "$confirmation" == "yes" ]; then
+                        print_status "Deleting directory..."
+                        rm -rf "$PROJECT_NAME"
+                        print_status "Creating fresh project directory..."
+                        mkdir -p "$PROJECT_NAME"
+                        cd "$PROJECT_NAME"
+                    else
+                        print_error "Deletion cancelled. Exiting."
+                        exit 1
+                    fi
+                    ;;
+                3)
+                    read -p "Enter new project name: " NEW_PROJECT_NAME
+                    if [ -z "$NEW_PROJECT_NAME" ]; then
+                        print_error "Project name cannot be empty. Exiting."
+                        exit 1
+                    fi
+                    PROJECT_NAME="$NEW_PROJECT_NAME"
+                    print_status "Using new project name: $PROJECT_NAME"
+                    if [ -d "$PROJECT_NAME" ]; then
+                        print_error "Directory $PROJECT_NAME also exists. Please run the script again with a unique name."
+                        exit 1
+                    fi
+                    mkdir -p "$PROJECT_NAME"
+                    cd "$PROJECT_NAME"
+                    ;;
+                4)
+                    print_status "Exiting..."
+                    exit 0
+                    ;;
+                *)
+                    print_error "Invalid option. Exiting."
+                    exit 1
+                    ;;
+            esac
+        fi
+    else
+        print_status "Creating project directory..."
+        mkdir -p "$PROJECT_NAME"
+        cd "$PROJECT_NAME"
+        print_status "Project directory created: $PROJECT_NAME"
+    fi
+else
+    print_skip "Skipping project directory creation"
+    if [ -d "$PROJECT_NAME" ]; then
+        cd "$PROJECT_NAME"
+        print_status "Changed to existing directory: $PROJECT_NAME"
+    else
+        print_error "Project directory does not exist and step was skipped. Cannot continue."
+        exit 1
+    fi
+fi
+
+# Step 5: Initialize DDEV project
+if ! should_skip_step 5 && ask_step 5 "Initialize DDEV project configuration"; then
+    if [ -f ".ddev/config.yaml" ]; then
+        print_skip "DDEV project is already configured (.ddev/config.yaml exists)"
+        print_warning "If you want to reconfigure, delete .ddev directory first"
+    else
+        print_status "Initializing DDEV project..."
+        ddev config --project-type=drupal \
+            --docroot=html \
+            --php-version=$PHP_VERSION \
+            --database=mysql:$MYSQL_VERSION \
+            --nodejs-version=$NODEJS_VERSION \
+            --project-name="$PROJECT_NAME" \
+            --create-docroot
+
+        # Configure additional DDEV settings
+        print_status "Configuring additional DDEV settings..."
+        
+        # Create a custom config file to avoid duplicating keys
+        cat > .ddev/config.opensocial.yaml <<EOF
+# OpenSocial custom configuration
+# This file extends the main config.yaml
+
+# Additional PHP packages
+webimage_extra_packages: [php${PHP_VERSION}-gd, php${PHP_VERSION}-uploadprogress]
+
+# Increase PHP memory limit for Drupal
+php_memory_limit: 512M
+
+# Hooks for composer
+hooks:
+  post-start:
+    - exec: composer install --no-interaction || true
+EOF
+        print_status "DDEV project configured successfully"
+    fi
+else
+    print_skip "Skipping DDEV project initialization"
+fi
+
+# Step 6: Start DDEV
+if ! should_skip_step 6 && ask_step 6 "Start DDEV containers"; then
+    # Check if DDEV is already running
+    if ddev describe >/dev/null 2>&1 && ddev status 2>&1 | grep -q "running"; then
+        print_skip "DDEV is already running for this project"
+    else
+        print_status "Starting DDEV..."
+        ddev start
+        print_status "DDEV started successfully"
+    fi
+else
+    print_skip "Skipping DDEV start"
+fi
+
+# Step 7: Install Composer dependencies
+if ! should_skip_step 7 && ask_step 7 "Install OpenSocial via Composer"; then
+    if [ -f "composer.json" ]; then
+        print_skip "composer.json already exists. Skipping composer create."
+        print_status "Running composer install to ensure dependencies are up to date..."
+        ddev composer install
+    else
+        print_status "Creating Composer project for OpenSocial..."
+        
+        # Use the correct OpenSocial template
+        # For dev-master (latest development version)
+        if [ "$OPENSOCIAL_VERSION" = "dev-master" ]; then
+            print_status "Installing latest development version (dev-master)..."
+            ddev composer create-project goalgorilla/social_template:dev-master . --no-interaction --stability dev
+        else
+            # For specific version tags (e.g., 12.4.13, 13.0.0-beta1)
+            print_status "Installing version $OPENSOCIAL_VERSION..."
+            ddev composer create-project goalgorilla/social_template:$OPENSOCIAL_VERSION . --no-interaction
         fi
         
-        print_info "Step 11 complete"
-    else
-        print_info "Step 11: Already complete (Cron stopped) - Skipping"
+        print_status "OpenSocial Composer project created successfully"
     fi
-fi
+    
+    # Ensure Drush is installed
+    print_status "Checking for Drush..."
+    if ! ddev drush version >/dev/null 2>&1; then
+        print_status "Drush not found. Installing Drush..."
+        ddev composer require drush/drush --dev
+        print_status "Drush installed successfully"
+    else
+        print_skip "Drush is already installed"
+    fi
+    
+    # Configure private file path BEFORE installation (required by OpenSocial)
+    print_status "Configuring private file path (required by OpenSocial)..."
+    
+    # Create private directory if it doesn't exist
+    if [ ! -d "../private" ]; then
+        print_status "Creating private files directory..."
+        mkdir -p ../private
+        chmod 755 ../private
+        print_status "Private directory created at ../private"
+    else
+        print_skip "Private directory already exists"
+    fi
+    
+    # Create settings.php if it doesn't exist yet
+    if [ ! -f "html/sites/default/settings.php" ] && [ -f "html/sites/default/default.settings.php" ]; then
+        print_status "Creating settings.php from default.settings.php..."
+        cp html/sites/default/default.settings.php html/sites/default/settings.php
+        chmod 644 html/sites/default/settings.php
+    fi
+    
+    # Add private file path to settings.php
+    if [ -f "html/sites/default/settings.php" ]; then
+        if ! grep -q "file_private_path" html/sites/default/settings.php; then
+            print_status "Adding private file path to settings.php..."
+            cat >> html/sites/default/settings.php <<'PRIVATEOF'
 
-###############################################################################
-# Step 12: Run Installation Script
-###############################################################################
-if [ "${STEP_SELECTED[12]}" = "true" ]; then
-    if ! verify_step_12; then
-        print_step "Step 12: Running Open Social installation..."
-        echo "This will take 5-10 minutes. Please be patient..."
-
-        docker exec social_web bash /var/www/scripts/social/install/install_script.sh -s -d
+/**
+ * Private file path configuration.
+ * 
+ * This directory should be outside the web root for security.
+ * This is REQUIRED by OpenSocial distribution.
+ */
+$settings['file_private_path'] = '../private';
+PRIVATEOF
+            print_status "Private file path added to settings.php"
+        else
+            print_skip "Private file path already configured in settings.php"
+        fi
         
-        print_info "Step 12 complete"
+        # Verify the configuration
+        if grep -q "file_private_path.*private" html/sites/default/settings.php; then
+            print_status "✓ Private file path is properly configured and ready for installation"
+        else
+            print_error "Failed to configure private file path. OpenSocial installation may fail."
+        fi
     else
-        print_info "Step 12: Already complete (Open Social installed) - Skipping"
+        print_warning "settings.php not found. It will be created during Drupal installation."
+        print_warning "Private file path will be configured after installation."
     fi
+else
+    print_skip "Skipping Composer dependencies installation"
 fi
 
-###############################################################################
-# Step 13: Start All Containers
-###############################################################################
-if [ "${STEP_SELECTED[13]}" = "true" ]; then
-    if ! verify_step_13; then
-        cd "$INSTALL_DIR"
-        print_step "Step 13: Starting all containers including cron..."
-        docker-compose up -d
+# Step 8: Install Drupal/OpenSocial
+if ! should_skip_step 8 && ask_step 8 "Install Drupal/OpenSocial database"; then
+    # Check if Drupal is already installed
+    if ddev drush status --fields=bootstrap 2>/dev/null | grep -q "Successful"; then
+        print_skip "Drupal is already installed"
+        print_warning "If you want to reinstall, run: ddev drush site:install social --yes"
+    else
+        # Get absolute path for better debugging
+        CURRENT_DIR=$(pwd)
+        print_status "Working directory: $CURRENT_DIR"
         
-        print_info "Step 13 complete"
-    else
-        print_info "Step 13: Already complete (All containers running) - Skipping"
+        # Ensure private directory exists before installation
+        PRIVATE_DIR="../private"
+        PRIVATE_ABS_PATH="$(cd .. && pwd)/private"
+        if [ ! -d "$PRIVATE_DIR" ]; then
+            print_status "Creating private files directory..."
+            print_status "  Location: $PRIVATE_ABS_PATH"
+            mkdir -p "$PRIVATE_DIR"
+            chmod 775 "$PRIVATE_DIR"
+            print_status "✓ Private directory created at: $PRIVATE_ABS_PATH"
+        else
+            print_skip "Private directory already exists at: $PRIVATE_ABS_PATH"
+        fi
+        
+        # CRITICAL: Prepare settings.php BEFORE running site:install
+        print_status "Preparing settings.php before installation..."
+        
+        SETTINGS_FILE="html/sites/default/settings.php"
+        DEFAULT_SETTINGS="html/sites/default/default.settings.php"
+        SETTINGS_ABS_PATH="$CURRENT_DIR/$SETTINGS_FILE"
+        
+        print_status "  Settings file: $SETTINGS_ABS_PATH"
+        
+        # Ensure default directory is writable
+        chmod 755 html/sites/default
+        
+        # If settings.php doesn't exist, create it from default
+        if [ ! -f "$SETTINGS_FILE" ]; then
+            if [ -f "$DEFAULT_SETTINGS" ]; then
+                print_status "Creating settings.php from default.settings.php..."
+                print_status "  Source: $CURRENT_DIR/$DEFAULT_SETTINGS"
+                print_status "  Target: $SETTINGS_ABS_PATH"
+                cp "$DEFAULT_SETTINGS" "$SETTINGS_FILE"
+                print_status "✓ Created settings.php"
+            fi
+        else
+            print_skip "settings.php already exists at: $SETTINGS_ABS_PATH"
+        fi
+        
+        # Make settings.php writable for installation
+        chmod 666 "$SETTINGS_FILE"
+        print_status "Set $SETTINGS_FILE to writable (666)"
+        
+        # Add private file path BEFORE installation (OpenSocial checks this during install)
+        if ! grep -q "file_private_path" "$SETTINGS_FILE"; then
+            print_status "Adding private file path to settings.php..."
+            print_status "  File: $SETTINGS_ABS_PATH"
+            print_status "  Adding: \$settings['file_private_path'] = '../private';"
+            cat >> "$SETTINGS_FILE" <<'PRIVATEOF'
+
+/**
+ * Private file path configuration.
+ * 
+ * This directory should be outside the web root for security.
+ * This is REQUIRED by OpenSocial distribution before installation.
+ */
+$settings['file_private_path'] = '../private';
+PRIVATEOF
+            print_status "✓ Private file path added to: $SETTINGS_ABS_PATH"
+        else
+            print_skip "Private file path already in: $SETTINGS_ABS_PATH"
+        fi
+        
+        # Ensure settings.ddev.php will be included (DDEV creates this file)
+        SETTINGS_DDEV="html/sites/default/settings.ddev.php"
+        SETTINGS_DDEV_ABS="$CURRENT_DIR/$SETTINGS_DDEV"
+        if ! grep -q "settings.ddev.php" "$SETTINGS_FILE"; then
+            print_status "Adding settings.ddev.php inclusion..."
+            print_status "  To file: $SETTINGS_ABS_PATH"
+            print_status "  Will include: $SETTINGS_DDEV_ABS (auto-generated by DDEV)"
+            cat >> "$SETTINGS_FILE" <<'DDEVEOF'
+
+/**
+ * Automatically generated include for settings managed by ddev.
+ */
+$ddev_settings = dirname(__FILE__) . '/settings.ddev.php';
+if (getenv('IS_DDEV_PROJECT') == 'true' && is_readable($ddev_settings)) {
+  require $ddev_settings;
+}
+DDEVEOF
+            print_status "✓ settings.ddev.php inclusion added to: $SETTINGS_ABS_PATH"
+        else
+            print_skip "settings.ddev.php inclusion already in: $SETTINGS_ABS_PATH"
+        fi
+        
+        print_status "Installing OpenSocial..."
+
+        # Install using Drush
+        # DDEV's settings.ddev.php will provide the database connection
+        ddev drush site:install social \
+            --account-name="$ADMIN_USER" \
+            --account-pass="$ADMIN_PASS" \
+            --account-mail="$ADMIN_MAIL" \
+            --site-name="$SITE_NAME" \
+            --site-mail="$SITE_MAIL" \
+            --locale=en \
+            --yes
+        
+        print_status "OpenSocial installed successfully"
+        
+        # Verify and fix settings.php after installation
+        print_status "Verifying configuration after installation..."
+        print_status "  Checking: $SETTINGS_ABS_PATH"
+        
+        # Ensure settings.php is writable for post-install configuration
+        chmod 666 "$SETTINGS_FILE"
+        
+        # Re-check private file path (site:install might have modified settings.php)
+        if ! grep -q "file_private_path" "$SETTINGS_FILE"; then
+            print_warning "Private file path was removed during installation. Re-adding..."
+            print_status "  Re-adding to: $SETTINGS_ABS_PATH"
+            cat >> "$SETTINGS_FILE" <<'PRIVATEOF2'
+
+/**
+ * Private file path configuration.
+ * 
+ * This directory should be outside the web root for security.
+ * This is REQUIRED by OpenSocial distribution.
+ */
+$settings['file_private_path'] = '../private';
+PRIVATEOF2
+            print_status "✓ Private file path re-added"
+        fi
+        
+        # Re-check settings.ddev.php inclusion
+        if ! grep -q "settings.ddev.php" "$SETTINGS_FILE"; then
+            print_warning "settings.ddev.php inclusion was removed during installation. Re-adding..."
+            print_status "  Re-adding to: $SETTINGS_ABS_PATH"
+            cat >> "$SETTINGS_FILE" <<'DDEVEOF2'
+
+/**
+ * Automatically generated include for settings managed by ddev.
+ */
+$ddev_settings = dirname(__FILE__) . '/settings.ddev.php';
+if (getenv('IS_DDEV_PROJECT') == 'true' && is_readable($ddev_settings)) {
+  require $ddev_settings;
+}
+DDEVEOF2
+            print_status "✓ settings.ddev.php inclusion re-added"
+        fi
+        
+        # Ensure settings.local.php will be included
+        SETTINGS_LOCAL="html/sites/default/settings.local.php"
+        SETTINGS_LOCAL_ABS="$CURRENT_DIR/$SETTINGS_LOCAL"
+        if ! grep -q "settings.local.php" "$SETTINGS_FILE"; then
+            print_status "Adding settings.local.php inclusion..."
+            print_status "  To file: $SETTINGS_ABS_PATH"
+            print_status "  Will include: $SETTINGS_LOCAL_ABS (created in Step 13)"
+            cat >> "$SETTINGS_FILE" <<'LOCALEOF'
+
+/**
+ * Load local development override configuration, if available.
+ */
+if (file_exists($app_root . '/' . $site_path . '/settings.local.php')) {
+  include $app_root . '/' . $site_path . '/settings.local.php';
+}
+LOCALEOF
+            print_status "✓ settings.local.php inclusion added to: $SETTINGS_ABS_PATH"
+        else
+            print_skip "settings.local.php inclusion already in: $SETTINGS_ABS_PATH"
+        fi
+        
+        # Set proper permissions on settings.php (read-only for security)
+        chmod 444 "$SETTINGS_FILE"
+        chmod 755 html/sites/default
+        print_status "Set proper permissions on: $SETTINGS_ABS_PATH (444 - read-only)"
+        
+        # Verify final configuration
+        print_status "Final verification of: $SETTINGS_ABS_PATH"
+        if grep -q "file_private_path" "$SETTINGS_FILE"; then
+            print_status "  ✓ Private file path is configured"
+        else
+            print_error "  ✗ Private file path is missing!"
+        fi
+        
+        if grep -q "settings.ddev.php" "$SETTINGS_FILE"; then
+            print_status "  ✓ settings.ddev.php inclusion is configured"
+        else
+            print_error "  ✗ settings.ddev.php inclusion is missing!"
+        fi
+        
+        if grep -q "settings.local.php" "$SETTINGS_FILE"; then
+            print_status "  ✓ settings.local.php inclusion is configured"
+        else
+            print_error "  ✗ settings.local.php inclusion is missing!"
+        fi
+        
+        # Clear cache to apply all settings
+        print_status "Clearing cache to apply settings..."
+        ddev drush cr
+        
+        print_status "=================="
+        print_status "Configuration Summary:"
+        print_status "=================="
+        print_status "Settings file: $SETTINGS_ABS_PATH"
+        print_status "Private directory: $PRIVATE_ABS_PATH"
+        print_status "DDEV settings: $SETTINGS_DDEV_ABS (auto-created by DDEV)"
+        print_status "Local settings: $SETTINGS_LOCAL_ABS (will be created in Step 13)"
+        print_status "=================="
+        print_status "✓ Installation and configuration complete"
     fi
+else
+    print_skip "Skipping Drupal/OpenSocial installation"
 fi
 
-###############################################################################
-# Completion Summary
-###############################################################################
-echo ""
-echo "###############################################################################"
-echo -e "#${GREEN}                                                                             ${NC}#"
-echo -e "#${GREEN}                    Selected Steps Completed!                                ${NC}#"
-echo -e "#${GREEN}                                                                             ${NC}#"
-echo "###############################################################################"
-echo ""
+# Step 9: Configure site settings
+if ! should_skip_step 9 && ask_step 9 "Configure site settings"; then
+    print_status "Configuring site settings..."
 
-# Show which steps were executed
-echo "Executed steps:"
-for num in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
-    if [ "${STEP_SELECTED[$num]}" = "true" ]; then
-        echo -e "  ${GREEN}✓${NC} Step $num"
+    # Set timezone
+    print_status "Setting timezone to $SITE_TIMEZONE..."
+    ddev drush config:set system.date timezone.default "$SITE_TIMEZONE" --yes 2>/dev/null || print_warning "Could not set timezone (may already be configured)"
+
+    # Set date formats
+    print_status "Configuring date settings..."
+    ddev drush config:set system.date timezone.user.configurable 1 --yes 2>/dev/null || print_warning "Could not set user timezone configuration"
+
+    # Configure file system settings
+    print_status "Configuring file system paths..."
+    ddev drush config:set system.file path.temporary "/tmp" --yes 2>/dev/null || print_warning "Could not set temporary path"
+
+    # Enable clean URLs (should be default, but making sure)
+    print_status "Configuring performance settings..."
+    ddev drush config:set system.performance css.preprocess 1 --yes 2>/dev/null || print_warning "Could not set CSS preprocessing"
+    ddev drush config:set system.performance js.preprocess 1 --yes 2>/dev/null || print_warning "Could not set JS preprocessing"
+
+    # Configure error logging (development settings)
+    print_status "Configuring error logging..."
+    ddev drush config:set system.logging error_level verbose --yes 2>/dev/null || print_warning "Could not set error level"
+
+    # Note: automated_cron.settings doesn't exist in OpenSocial by default
+    # Cron is configured through DDEV or system cron instead
+    
+    print_status "Site settings configured successfully"
+else
+    print_skip "Skipping site settings configuration"
+fi
+
+# Step 10: Enable recommended modules
+if ! should_skip_step 10 && ask_step 10 "Enable recommended OpenSocial modules"; then
+    print_status "Enabling recommended OpenSocial modules..."
+
+    # Core social modules (most should already be enabled, but ensuring)
+    ddev drush en -y \
+        social_user \
+        social_profile \
+        social_group \
+        social_event \
+        social_topic \
+        social_search \
+        social_comment \
+        social_like \
+        social_follow_content \
+        social_tagging 2>/dev/null || print_warning "Some modules may already be enabled"
+
+    # Enable additional useful modules
+    ddev drush en -y \
+        admin_toolbar \
+        admin_toolbar_tools \
+        pathauto 2>/dev/null || print_warning "Some modules may already be enabled"
+
+    print_status "Setting up default permissions..."
+
+    # Set reasonable file upload limits
+    ddev drush config:set system.file allow_insecure_uploads false --yes
+    
+    print_status "Recommended modules enabled successfully"
+else
+    print_skip "Skipping module enablement"
+fi
+
+# Step 11: Set up default content settings
+if ! should_skip_step 11 && ask_step 11 "Configure user and content settings"; then
+    print_status "Configuring content settings..."
+
+    # Enable user registration with admin approval (more secure default)
+    ddev drush config:set user.settings register visitors_admin_approval --yes
+
+    # Configure user email verification
+    ddev drush config:set user.settings verify_mail 1 --yes
+
+    # Set default user picture
+    ddev drush config:set user.settings anonymous "Anonymous" --yes
+    
+    print_status "Content settings configured successfully"
+else
+    print_skip "Skipping content settings configuration"
+fi
+
+# Step 12: Clear cache and rebuild
+if ! should_skip_step 12 && ask_step 12 "Clear cache and rebuild permissions"; then
+    print_status "Clearing Drupal cache and rebuilding..."
+    ddev drush cr
+
+    # Rebuild node access permissions
+    print_status "Rebuilding node access permissions..."
+    ddev drush php-eval "node_access_rebuild();" 2>/dev/null || print_warning "Node access rebuild may have failed (this is OK if no content exists yet)"
+    
+    print_status "Cache cleared and permissions rebuilt successfully"
+else
+    print_skip "Skipping cache clear and rebuild"
+fi
+
+# Step 13: Set up development settings (optional)
+if ! should_skip_step 13 && ask_step 13 "Set up development settings (settings.local.php)"; then
+    print_status "Setting up development-friendly settings..."
+    
+    CURRENT_DIR=$(pwd)
+    PRIVATE_DIR="../private"
+    PRIVATE_ABS_PATH="$(cd .. && pwd)/private"
+    SETTINGS_FILE="html/sites/default/settings.php"
+    SETTINGS_LOCAL="html/sites/default/settings.local.php"
+    SETTINGS_ABS_PATH="$CURRENT_DIR/$SETTINGS_FILE"
+    SETTINGS_LOCAL_ABS="$CURRENT_DIR/$SETTINGS_LOCAL"
+
+    # Verify private directory exists (should have been created in Step 7)
+    if [ ! -d "$PRIVATE_DIR" ]; then
+        print_warning "Private directory not found. Creating it now..."
+        print_status "  Location: $PRIVATE_ABS_PATH"
+        mkdir -p "$PRIVATE_DIR"
+        chmod 755 "$PRIVATE_DIR"
+        print_status "✓ Private directory created at: $PRIVATE_ABS_PATH"
+    else
+        print_skip "Private directory already exists at: $PRIVATE_ABS_PATH"
     fi
-done
 
+    # Verify private file path in settings.php (should have been added in Step 8)
+    if [ -f "$SETTINGS_FILE" ]; then
+        if ! grep -q "file_private_path" "$SETTINGS_FILE"; then
+            print_warning "Private file path not found in settings.php. Adding it now..."
+            print_status "  File: $SETTINGS_ABS_PATH"
+            chmod 644 "$SETTINGS_FILE"
+            cat >> "$SETTINGS_FILE" <<'PRIVATEOF'
+
+/**
+ * Private file path configuration.
+ * 
+ * This directory should be outside the web root for security.
+ * This is REQUIRED by OpenSocial distribution.
+ */
+$settings['file_private_path'] = '../private';
+PRIVATEOF
+            chmod 444 "$SETTINGS_FILE"
+            print_status "✓ Private file path added to: $SETTINGS_ABS_PATH"
+        else
+            print_skip "Private file path already configured in: $SETTINGS_ABS_PATH"
+        fi
+    else
+        print_warning "Settings file not found at: $SETTINGS_ABS_PATH"
+    fi
+
+    # Create settings.local.php for development
+    if [ -f "$SETTINGS_LOCAL" ]; then
+        print_skip "settings.local.php already exists at: $SETTINGS_LOCAL_ABS"
+    else
+        print_status "Creating settings.local.php for development..."
+        print_status "  Location: $SETTINGS_LOCAL_ABS"
+        cat > "$SETTINGS_LOCAL" <<'LOCALEOF'
+<?php
+
+/**
+ * Development settings for OpenSocial.
+ */
+
+// Disable CSS and JS aggregation.
+$config['system.performance']['css']['preprocess'] = FALSE;
+$config['system.performance']['js']['preprocess'] = FALSE;
+
+// Disable the render cache.
+$settings['cache']['bins']['render'] = 'cache.backend.null';
+
+// Disable Dynamic Page Cache.
+$settings['cache']['bins']['dynamic_page_cache'] = 'cache.backend.null';
+
+// Allow test modules and themes.
+$settings['extension_discovery_scan_tests'] = TRUE;
+
+// Enable access to rebuild.php.
+$settings['rebuild_access'] = TRUE;
+
+// Skip file system permissions hardening.
+$settings['skip_permissions_hardening'] = TRUE;
+
+// Show all error messages.
+$config['system.logging']['error_level'] = 'verbose';
+
+// Disable CSS and JS preprocessing.
+$config['system.performance']['css']['preprocess'] = FALSE;
+$config['system.performance']['js']['preprocess'] = FALSE;
+LOCALEOF
+
+        print_status "✓ Created settings.local.php at: $SETTINGS_LOCAL_ABS"
+    fi
+
+    # Ensure settings.php includes settings.local.php
+    if [ -f "$SETTINGS_FILE" ]; then
+        if ! grep -q "settings.local.php" "$SETTINGS_FILE" 2>/dev/null; then
+            print_status "Adding settings.local.php inclusion to settings.php..."
+            print_status "  Main file: $SETTINGS_ABS_PATH"
+            print_status "  Will include: $SETTINGS_LOCAL_ABS"
+            chmod 644 "$SETTINGS_FILE"
+            cat >> "$SETTINGS_FILE" <<'SETTINGSEOF'
+
+/**
+ * Load local development override configuration, if available.
+ */
+if (file_exists($app_root . '/' . $site_path . '/settings.local.php')) {
+  include $app_root . '/' . $site_path . '/settings.local.php';
+}
+SETTINGSEOF
+            chmod 444 "$SETTINGS_FILE"
+            print_status "✓ settings.local.php inclusion added to: $SETTINGS_ABS_PATH"
+        else
+            print_skip "settings.local.php inclusion already in: $SETTINGS_ABS_PATH"
+        fi
+    fi
+    
+    # Final verification of private file path
+    print_status "Final verification..."
+    if [ -f "$SETTINGS_FILE" ] && grep -q "file_private_path.*private" "$SETTINGS_FILE"; then
+        print_status "  ✓ Private file path is properly configured in: $SETTINGS_ABS_PATH"
+    else
+        print_error "  ✗ Private file path is not properly configured!"
+        print_error "     File: $SETTINGS_ABS_PATH"
+        print_error "     Please add: \$settings['file_private_path'] = '../private';"
+    fi
+    
+    print_status "=================="
+    print_status "Development Settings Summary:"
+    print_status "=================="
+    print_status "Settings file: $SETTINGS_ABS_PATH"
+    print_status "Local settings: $SETTINGS_LOCAL_ABS"
+    print_status "Private directory: $PRIVATE_ABS_PATH"
+    print_status "=================="
+else
+    print_skip "Skipping development settings setup"
+fi
+
+# Step 14: Display completion information
+print_status "=================================="
+print_status "OpenSocial installation complete!"
+print_status "=================================="
 echo ""
-echo "Access your site at:"
-echo "  Main site:    http://social.local"
-echo "  Mailcatcher:  http://mailcatcher.social.local"
-echo "  Solr admin:   http://solr.social.local"
+print_status "Project URL: https://$PROJECT_NAME.ddev.site"
+print_status "Admin username: $ADMIN_USER"
+print_status "Admin password: $ADMIN_PASS"
+print_status "Admin email: $ADMIN_MAIL"
 echo ""
-echo "Important next steps:"
-echo "  1. Visit http://social.local/admin/reports/status"
-echo "  2. Click 'Rebuild permissions' link"
-echo "  3. Change your admin password"
+print_status "Site Configuration:"
+echo "  Site name: $SITE_NAME"
+echo "  Timezone: $SITE_TIMEZONE"
+echo "  PHP version: $PHP_VERSION"
+echo "  MySQL version: $MYSQL_VERSION"
+echo "  Node.js version: $NODEJS_VERSION"
 echo ""
-echo "Useful commands:"
-echo "  View logs:           cd $INSTALL_DIR && docker-compose logs -f"
-echo "  Stop containers:     cd $INSTALL_DIR && docker-compose stop"
-echo "  Start containers:    cd $INSTALL_DIR && docker-compose start"
-echo "  Restart containers:  cd $INSTALL_DIR && docker-compose restart"
-echo "  Access web shell:    docker exec -it social_web bash"
-echo "  Run drush:           docker exec social_web drush status"
+print_status "Installed Features:"
+echo "  ✓ Core OpenSocial modules"
+echo "  ✓ Admin Toolbar with tools"
+echo "  ✓ Pathauto for clean URLs"
+echo "  ✓ Development settings configured"
+echo "  ✓ User registration (admin approval required)"
+echo "  ✓ Email verification enabled"
 echo ""
-echo "Script commands:"
-echo "  Check status:        $0 --status"
-echo "  Run again:           $0"
+print_status "Useful DDEV commands:"
+echo "  ddev start          - Start the project"
+echo "  ddev stop           - Stop the project"
+echo "  ddev restart        - Restart the project"
+echo "  ddev ssh            - SSH into web container"
+echo "  ddev drush          - Run Drush commands"
+echo "  ddev composer       - Run Composer commands"
+echo "  ddev describe       - Show project information"
+echo "  ddev logs           - View container logs"
+echo "  ddev exec npm       - Run npm commands"
 echo ""
-echo "Installation directory: $INSTALL_DIR"
+print_status "Common Drush commands:"
+echo "  ddev drush cr       - Clear cache"
+echo "  ddev drush uli      - Generate one-time login link"
+echo "  ddev drush status   - Show site status"
+echo "  ddev drush pml      - List installed modules"
 echo ""
-echo "###############################################################################"
+print_status "To access your site, run:"
+echo "  ddev launch"
+echo ""
+print_status "To log in as admin without password:"
+echo "  ddev drush uli"
+echo ""
+print_warning "IMPORTANT SECURITY REMINDERS:"
+echo "  1. Change the admin password after first login!"
+echo "  2. Update the site email in admin/config/system/site-information"
+echo "  3. Review user permissions at admin/people/permissions"
+echo "  4. For production, disable development settings in settings.local.php"
+
+# Optional: Launch the site in browser
+read -p "Do you want to launch the site in your browser now? (y/N) " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    ddev launch
+fi
+
+print_status "Installation script completed successfully!"
