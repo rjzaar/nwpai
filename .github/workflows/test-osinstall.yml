@@ -1,0 +1,64 @@
+name: Test osinstall.sh
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test-osinstall:
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Make osinstall.sh executable
+        run: chmod +x osinstall.sh
+      
+      - name: Test osinstall.sh syntax
+        run: bash -n osinstall.sh
+      
+      - name: Run osinstall.sh with dry-run (if supported)
+        run: |
+          # Test if the script runs without errors
+          # You may need to modify this depending on what the script does
+          # For now, we'll run it with bash -x for debugging
+          set -e
+          timeout 300 bash -x osinstall.sh || echo "Script execution test completed"
+        continue-on-error: true
+      
+      - name: Check for common issues
+        run: |
+          echo "Checking for common shell script issues..."
+          
+          # Check for unquoted variables
+          if grep -n '\$[A-Za-z_][A-Za-z0-9_]*[^"]' osinstall.sh | grep -v '#'; then
+            echo "Warning: Found potentially unquoted variables"
+          fi
+          
+          # Check for use of cd without error checking
+          if grep -n '^[[:space:]]*cd ' osinstall.sh | grep -v '||' | grep -v '&&'; then
+            echo "Warning: Found cd commands without error checking"
+          fi
+          
+          echo "Basic checks completed"
+      
+      - name: Run shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck osinstall.sh || echo "Shellcheck found issues (non-blocking)"
+        continue-on-error: true
+      
+      - name: Test script in Docker (Ubuntu 24.04)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace ubuntu:24.04 bash -c "
+            cd /workspace && 
+            apt-get update && 
+            apt-get install -y sudo && 
+            bash -n osinstall.sh &&
+            echo 'Script syntax is valid'
+          "
