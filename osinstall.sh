@@ -20,6 +20,15 @@ INSTALL_DIR="$HOME/Sites/social"
 GIT_REPO="https://github.com/goalgorilla/drupal_social.git"
 STATE_FILE="$HOME/.osinstall_state"
 
+# Check if running in CI/non-interactive mode
+CI_MODE="${CI:-false}"
+if [ -t 0 ]; then
+    INTERACTIVE=true
+else
+    INTERACTIVE=false
+    CI_MODE=true
+fi
+
 # Functions
 print_step() {
     echo -e "\n${GREEN}==>${NC} $1"
@@ -37,13 +46,6 @@ print_info() {
     echo -e "${BLUE}INFO:${NC} $1"
 }
 
-# Safe clear function that works in CI environments
-safe_clear() {
-    if [ -n "$TERM" ] && [ "$TERM" != "dumb" ]; then
-        clear 2>/dev/null || true
-    fi
-}
-
 check_root() {
     if [ "$EUID" -eq 0 ]; then 
         print_error "Please do not run this script as root or with sudo"
@@ -52,11 +54,15 @@ check_root() {
 }
 
 confirm_continue() {
-    read -p "Do you want to continue? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
+    if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != "true" ]; then
+        read -p "Do you want to continue? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            exit 0
+        fi
+    else
+        print_info "Running in non-interactive mode, auto-continuing..."
     fi
 }
 
@@ -140,7 +146,7 @@ check_hosts_configured() {
 }
 
 # Start installation
-safe_clear
+clear
 echo "###############################################################################"
 echo "#                                                                             #"
 echo "#      Open Social Docker Installation Script for Ubuntu (Resumable)         #"
@@ -259,13 +265,23 @@ if ! is_step_complete 3; then
 
     # Configure Git if not already configured
     if [ -z "$(git config --global user.name)" ]; then
-        read -p "Enter your Git name: " git_name
-        git config --global user.name "$git_name"
+        if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != "true" ]; then
+            read -p "Enter your Git name: " git_name
+            git config --global user.name "$git_name"
+        else
+            print_info "Setting default Git name for CI"
+            git config --global user.name "CI Bot"
+        fi
     fi
 
     if [ -z "$(git config --global user.email)" ]; then
-        read -p "Enter your Git email: " git_email
-        git config --global user.email "$git_email"
+        if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != "true" ]; then
+            read -p "Enter your Git email: " git_email
+            git config --global user.email "$git_email"
+        else
+            print_info "Setting default Git email for CI"
+            git config --global user.email "ci@example.com"
+        fi
     fi
     
     mark_step_complete 3
@@ -309,14 +325,20 @@ if ! is_step_complete 5; then
         print_info "Repository already cloned at $INSTALL_DIR"
     elif [ -d "$INSTALL_DIR" ]; then
         print_warning "Directory $INSTALL_DIR already exists but is not a git repository."
-        read -p "Do you want to remove it and clone fresh? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != "true" ]; then
+            read -p "Do you want to remove it and clone fresh? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                rm -rf "$INSTALL_DIR"
+                git clone "$GIT_REPO" "$INSTALL_DIR"
+            else
+                print_error "Cannot proceed without a clean directory. Exiting."
+                exit 1
+            fi
+        else
+            print_info "CI mode: Removing existing directory and cloning fresh"
             rm -rf "$INSTALL_DIR"
             git clone "$GIT_REPO" "$INSTALL_DIR"
-        else
-            print_error "Cannot proceed without a clean directory. Exiting."
-            exit 1
         fi
     else
         git clone "$GIT_REPO" "$INSTALL_DIR"
@@ -337,10 +359,14 @@ if ! is_step_complete 6; then
     
     if check_dependencies_installed; then
         print_info "Dependencies appear to be already installed."
-        read -p "Do you want to reinstall? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            composer install
+        if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != "true" ]; then
+            read -p "Do you want to reinstall? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                composer install
+            fi
+        else
+            print_info "CI mode: Skipping reinstall of existing dependencies"
         fi
     else
         composer install
@@ -389,13 +415,18 @@ if ! is_step_complete 7.5; then
     
     if [ -f "$ENV_FILE" ]; then
         print_info "Environment file already exists at $ENV_FILE"
-        read -p "Do you want to recreate it? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            mark_step_complete 7.5
-            print_info "Step 7.5: Using existing .env file - Skipping recreation"
+        if [ "$INTERACTIVE" = true ] && [ "$CI_MODE" != "true" ]; then
+            read -p "Do you want to recreate it? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                mark_step_complete 7.5
+                print_info "Step 7.5: Using existing .env file - Skipping recreation"
+            else
+                rm "$ENV_FILE"
+            fi
         else
-            rm "$ENV_FILE"
+            print_info "CI mode: Using existing .env file"
+            mark_step_complete 7.5
         fi
     fi
     
@@ -420,9 +451,8 @@ EOF
         print_info "Created .env file with default configuration"
         echo "Contents:"
         cat "$ENV_FILE"
+        mark_step_complete 7.5
     fi
-    
-    mark_step_complete 7.5
 else
     print_info "Step 7.5: Already complete (Environment configured) - Skipping"
 fi
@@ -501,7 +531,7 @@ if ! is_step_complete 11; then
     print_step "Step 11: Running Open Social installation..."
     echo "This will take 5-10 minutes. Please be patient..."
 
-    docker exec social_web bash /var/www/scripts/social/install/install_script.sh
+    docker exec social_web bash /var/www/scripts/social/install/install_script.sh -s -d
     
     mark_step_complete 11
 else
