@@ -9,6 +9,11 @@
 
 set -e  # Exit on any error
 
+# Fix for "TERM environment variable not set" error
+if [ -z "$TERM" ]; then
+    export TERM=xterm
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -227,7 +232,7 @@ if ! is_step_complete 2; then
     fi
     
     # Add user to docker group (idempotent)
-    sudo usermod -aG docker "$USER"
+    sudo usermod -aG docker $USER
     
     # Verify Docker installation
     docker --version
@@ -254,12 +259,12 @@ if ! is_step_complete 3; then
 
     # Configure Git if not already configured
     if [ -z "$(git config --global user.name)" ]; then
-        read -r -p "Enter your Git name: " git_name
+        read -p "Enter your Git name: " git_name
         git config --global user.name "$git_name"
     fi
 
     if [ -z "$(git config --global user.email)" ]; then
-        read -r -p "Enter your Git email: " git_email
+        read -p "Enter your Git email: " git_email
         git config --global user.email "$git_email"
     fi
     
