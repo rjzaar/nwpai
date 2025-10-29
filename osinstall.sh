@@ -430,7 +430,7 @@ if ! is_step_complete 7.5; then
         fi
     fi
     
-    if [ ! -f "$ENV_FILE" ]; then
+    if ! is_step_complete 7.5 && [ ! -f "$ENV_FILE" ]; then
         cat > "$ENV_FILE" << 'EOF'
 # Project Configuration
 PROJECT_NAME=social
