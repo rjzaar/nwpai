@@ -146,7 +146,10 @@ check_hosts_configured() {
 }
 
 # Start installation
-clear
+# Only clear screen in interactive mode
+if [ "$INTERACTIVE" = true ]; then
+    clear
+fi
 echo "###############################################################################"
 echo "#                                                                             #"
 echo "#      Open Social Docker Installation Script for Ubuntu (Resumable)         #"
