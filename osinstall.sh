@@ -2,17 +2,11 @@
 
 ###############################################################################
 # Open Social Docker Installation Script for Ubuntu (Resumable Version)
-# FIXED: Configures private file system before installation
 # This script automates the complete installation of Open Social using Docker
 # with checkpoint support for resuming interrupted installations
 ###############################################################################
 
 set -e  # Exit on any error
-
-# Fix for "TERM environment variable not set" error
-if [ -z "$TERM" ]; then
-    export TERM=xterm
-fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -41,6 +35,13 @@ print_error() {
 
 print_info() {
     echo -e "${BLUE}INFO:${NC} $1"
+}
+
+# Safe clear function that works in CI environments
+safe_clear() {
+    if [ -n "$TERM" ] && [ "$TERM" != "dumb" ]; then
+        clear 2>/dev/null || true
+    fi
 }
 
 check_root() {
@@ -80,7 +81,7 @@ show_progress() {
     echo "Installation Progress:"
     echo "====================="
     local i
-    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+    for i in 1 2 3 4 5 6 7 7.5 8 9 10 11 12; do
         if is_step_complete "$i"; then
             echo -e "  Step $i: ${GREEN}✓ Complete${NC}"
         else
@@ -139,11 +140,10 @@ check_hosts_configured() {
 }
 
 # Start installation
-clear
+safe_clear
 echo "###############################################################################"
 echo "#                                                                             #"
 echo "#      Open Social Docker Installation Script for Ubuntu (Resumable)         #"
-echo "#                  FIXED: Private File System Configuration                  #"
 echo "#                                                                             #"
 echo "###############################################################################"
 echo ""
@@ -380,10 +380,10 @@ else
 fi
 
 ###############################################################################
-# Step 8: Configure Environment Variables
+# Step 7.5: Configure Environment Variables
 ###############################################################################
-if ! is_step_complete 8; then
-    print_step "Step 8: Configuring environment variables..."
+if ! is_step_complete 7.5; then
+    print_step "Step 7.5: Configuring environment variables..."
     
     ENV_FILE="$INSTALL_DIR/.env"
     
@@ -392,8 +392,8 @@ if ! is_step_complete 8; then
         read -p "Do you want to recreate it? (y/n) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            mark_step_complete 8
-            print_info "Step 8: Using existing .env file - Skipping recreation"
+            mark_step_complete 7.5
+            print_info "Step 7.5: Using existing .env file - Skipping recreation"
         else
             rm "$ENV_FILE"
         fi
@@ -422,16 +422,16 @@ EOF
         cat "$ENV_FILE"
     fi
     
-    mark_step_complete 8
+    mark_step_complete 7.5
 else
-    print_info "Step 8: Already complete (Environment configured) - Skipping"
+    print_info "Step 7.5: Already complete (Environment configured) - Skipping"
 fi
 
 ###############################################################################
-# Step 9: Build and Start Containers
+# Step 8: Build and Start Containers
 ###############################################################################
-if ! is_step_complete 9; then
-    print_step "Step 9: Building and starting Docker containers..."
+if ! is_step_complete 8; then
+    print_step "Step 8: Building and starting Docker containers..."
     echo "This may take several minutes on first run..."
 
     docker-compose up -d
@@ -443,9 +443,9 @@ if ! is_step_complete 9; then
     echo -e "\nContainer status:"
     docker ps --format "table {{.Names}}\t{{.Status}}"
     
-    mark_step_complete 9
+    mark_step_complete 8
 else
-    print_info "Step 9: Already complete (Containers running) - Skipping"
+    print_info "Step 8: Already complete (Containers running) - Skipping"
     # Ensure containers are up even if step was marked complete
     if ! check_containers_running; then
         print_warning "Containers are not running. Starting them..."
@@ -455,10 +455,10 @@ else
 fi
 
 ###############################################################################
-# Step 10: Configure Hosts File
+# Step 9: Configure Hosts File
 ###############################################################################
-if ! is_step_complete 10; then
-    print_step "Step 10: Configuring /etc/hosts file..."
+if ! is_step_complete 9; then
+    print_step "Step 9: Configuring /etc/hosts file..."
 
     HOSTS_ENTRIES="127.0.0.1 social.local
 127.0.0.1 mailcatcher.social.local
@@ -472,16 +472,16 @@ if ! is_step_complete 10; then
         echo "Added entries to /etc/hosts"
     fi
     
-    mark_step_complete 10
+    mark_step_complete 9
 else
-    print_info "Step 10: Already complete (Hosts configured) - Skipping"
+    print_info "Step 9: Already complete (Hosts configured) - Skipping"
 fi
 
 ###############################################################################
-# Step 11: Stop Cron Container
+# Step 10: Stop Cron Container
 ###############################################################################
-if ! is_step_complete 11; then
-    print_step "Step 11: Stopping cron container for installation..."
+if ! is_step_complete 10; then
+    print_step "Step 10: Stopping cron container for installation..."
     
     if docker ps --format '{{.Names}}' | grep -q '^social_cron$'; then
         docker stop social_cron
@@ -489,102 +489,35 @@ if ! is_step_complete 11; then
         print_info "Cron container not running or doesn't exist yet."
     fi
     
-    mark_step_complete 11
+    mark_step_complete 10
 else
-    print_info "Step 11: Already complete (Cron stopped) - Skipping"
+    print_info "Step 10: Already complete (Cron stopped) - Skipping"
 fi
 
 ###############################################################################
-# Step 12: Configure Private File System (CRITICAL FIX FOR OPEN SOCIAL)
+# Step 11: Run Installation Script
 ###############################################################################
-if ! is_step_complete 12; then
-    print_step "Step 12: Configuring private file system (CRITICAL FIX)..."
-    
-    print_info "This step configures the private file system required by Open Social"
-    
-    # Check if web container is running
-    if ! docker ps --format '{{.Names}}' | grep -q '^social_web$'; then
-        print_error "Web container is not running. Cannot configure private file system."
-        exit 1
-    fi
-    
-    # Create private directory inside the container
-    print_info "Creating private directory in container..."
-    docker exec social_web mkdir -p /var/www/private
-    docker exec social_web chmod 755 /var/www/private
-    
-    # Create tmp directory
-    print_info "Creating tmp directory in container..."
-    docker exec social_web mkdir -p /var/www/tmp  
-    docker exec social_web chmod 755 /var/www/tmp
-    
-    # Configure settings.php inside the container
-    print_info "Configuring settings.php for private files..."
-    
-    docker exec social_web bash -c 'cat >> /var/www/html/sites/default/settings.php << "EOFPHP"
-
-/**
- * Private file system path
- * Required for Open Social installation
- * Configured by osinstall.sh
- */
-\$settings["file_private_path"] = "/var/www/private";
-
-/**
- * Temporary file system path
- */
-\$settings["file_temp_path"] = "/var/www/tmp";
-
-EOFPHP
-'
-    
-    # Verify the configuration was added
-    if docker exec social_web grep -q "file_private_path" /var/www/html/sites/default/settings.php; then
-        print_info "✓ Private file path successfully configured in settings.php"
-    else
-        print_error "Failed to configure private file path in settings.php"
-        exit 1
-    fi
-    
-    # Set proper ownership
-    docker exec social_web chown -R www-data:www-data /var/www/private
-    docker exec social_web chown -R www-data:www-data /var/www/tmp
-    
-    print_info "✓ Private file system configuration complete"
-    print_info "✓ Directory: /var/www/private"
-    print_info "✓ Temp directory: /var/www/tmp"
-    
-    mark_step_complete 12
-else
-    print_info "Step 12: Already complete (Private file system configured) - Skipping"
-fi
-
-###############################################################################
-# Step 13: Run Installation Script
-###############################################################################
-if ! is_step_complete 13; then
-    print_step "Step 13: Running Open Social installation..."
+if ! is_step_complete 11; then
+    print_step "Step 11: Running Open Social installation..."
     echo "This will take 5-10 minutes. Please be patient..."
-    
-    print_info "Private file system is now configured, proceeding with installation..."
 
     docker exec social_web bash /var/www/scripts/social/install/install_script.sh
     
-    mark_step_complete 13
+    mark_step_complete 11
 else
-    print_info "Step 13: Already complete (Open Social installed) - Skipping"
+    print_info "Step 11: Already complete (Open Social installed) - Skipping"
 fi
 
 ###############################################################################
-# Step 14: Start Cron Container
+# Step 12: Start Cron Container
 ###############################################################################
-if ! is_step_complete 14; then
-    print_step "Step 14: Starting all containers including cron..."
+if ! is_step_complete 12; then
+    print_step "Step 12: Starting all containers including cron..."
     docker-compose up -d
     
-    mark_step_complete 14
+    mark_step_complete 12
 else
-    print_info "Step 14: Already complete (All containers running) - Skipping"
+    print_info "Step 12: Already complete (All containers running) - Skipping"
 fi
 
 ###############################################################################
@@ -608,7 +541,6 @@ echo "Important next steps:"
 echo "  1. Visit http://social.local/admin/reports/status"
 echo "  2. Click 'Rebuild permissions' link"
 echo "  3. Change your admin password"
-echo "  4. Verify private file system at /admin/config/media/file-system"
 echo ""
 echo "Useful commands:"
 echo "  View logs:           cd $INSTALL_DIR && docker-compose logs -f"
