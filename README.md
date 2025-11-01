@@ -3,6 +3,7 @@
 
 Create an Opensocial DDEV install.
 
+Checkout https://github.com/rjzaar/nwpai/blob/main/log.md for the log of work, vision and plans
 
 ## License
 
