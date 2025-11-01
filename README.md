@@ -1,8 +1,6 @@
 # nwpai
 
 
-![Test OS Install](https://github.com/rjzaar/nwpai/actions/workflows/test-osinstall.yml/badge.svg)
-
 Create an Opensocial DDEV install.
 
 
