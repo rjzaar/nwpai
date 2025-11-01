@@ -66,7 +66,8 @@ This is the log file documenting the ongoing development work, architectural dec
 
 ## 🚀 Future Ideas
 
-*To be documented as the project evolves...*
+Maybe modify https://github.com/goalgorilla/open_social_docker/tree/master/drupal10/ci-php8.3-v2
+to be used for opensocial testing.
 
 ---
 
