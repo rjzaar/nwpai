@@ -1,9 +1,74 @@
-This is the log file. I'll try to keep this up to date with what I've done and how I'm going about things, as well as ideas I have for moving forward.
+# 📋 NWPAI Project Log
 
-Currently:
-There is this repo for project overview. I'm using ai a lot so I've called it nwpai.
-There is the install repo: https://github.com/rjzaar/commons_install
-Which has the install script: cinstall.sh which will install opensocial on vanilla ubuntu. It will also step over anything that is already installed.
-There is the fork of the opensocial_template called https://github.com/rjzaar/commons_template This integrates any modules we want to use into opensocial. This template is used for CI testing.
-There is the dworkflow module: https://github.com/rjzaar/dworkflow This is the module for building the particular dynamic workflow functionality that will drive a commons website. It will allow content (assets) 
-to be workflowed and workflow comments and editors recorded.
+> **Project Overview:** This log tracks the development progress, structure, and future ideas for the NWPAI project.
+
+---
+
+## 📝 Introduction
+
+This is the log file documenting the ongoing development work, architectural decisions, and ideas for moving forward with the NWPAI project.
+
+---
+
+## 🏗️ Current Project Structure
+
+### Main Repository
+**NWPAI** - Project overview and AI-assisted development tracking
+- **Repository:** [https://github.com/rjzaar/nwpai](https://github.com/rjzaar/nwpai)
+- **Purpose:** Central hub for project documentation and overview
+- **Note:** Named "nwpai" due to heavy AI usage in development
+
+---
+
+## 📦 Project Repositories
+
+### 1. Commons Install
+**Installation & Setup**
+
+- **Repository:** [https://github.com/rjzaar/commons_install](https://github.com/rjzaar/commons_install)
+- **Key Script:** `cinstall.sh`
+- **Functionality:**
+  - Installs OpenSocial on vanilla Ubuntu
+  - Smart installation that skips already-installed components
+  - Handles complete setup process
+
+### 2. Commons Template
+**OpenSocial Integration Template**
+
+- **Repository:** [https://github.com/rjzaar/commons_template](https://github.com/rjzaar/commons_template)
+- **Base:** Fork of opensocial_template
+- **Purpose:**
+  - Integrates desired modules into OpenSocial
+  - Used for CI testing
+  - Provides standardized template structure
+
+### 3. Dworkflow Module
+**Dynamic Workflow Management**
+
+- **Repository:** [https://github.com/rjzaar/dworkflow](https://github.com/rjzaar/dworkflow)
+- **Core Functionality:**
+  - Powers dynamic workflow features for Commons websites
+  - Manages content (assets) through workflow processes
+  - Tracks workflow comments and editors
+  - Provides comprehensive workflow recording
+
+---
+
+## 🎯 Key Features
+
+- ✅ Automated OpenSocial installation
+- ✅ Modular template system
+- ✅ Dynamic content workflow management
+- ✅ Workflow comment tracking
+- ✅ Editor history recording
+
+---
+
+## 🚀 Future Ideas
+
+*To be documented as the project evolves...*
+
+---
+
+**Last Updated:** 2025  
+**Maintainer:** rjzaar
