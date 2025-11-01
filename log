@@ -1,0 +1,9 @@
+This is the log file. I'll try to keep this up to date with what I've done and how I'm going about things, as well as ideas I have for moving forward.
+
+Currently:
+There is this repo for project overview. I'm using ai a lot so I've called it nwpai.
+There is the install repo: https://github.com/rjzaar/commons_install
+Which has the install script: cinstall.sh which will install opensocial on vanilla ubuntu. It will also step over anything that is already installed.
+There is the fork of the opensocial_template called https://github.com/rjzaar/commons_template This integrates any modules we want to use into opensocial. This template is used for CI testing.
+There is the dworkflow module: https://github.com/rjzaar/dworkflow This is the module for building the particular dynamic workflow functionality that will drive a commons website. It will allow content (assets) 
+to be workflowed and workflow comments and editors recorded.
