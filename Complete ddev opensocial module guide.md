@@ -157,7 +157,7 @@ router_https_port: "443"
 instrumentation_opt_in: false
 
 # Set default PHP version for new projects
-php_version: "8.3"
+php_version: "8.2"
 EOF
 ```
 
@@ -215,7 +215,7 @@ composer create-project goalgorilla/social_template:^12.0 opensocial --no-intera
 
 ```bash
 # Configure DDEV for Drupal with html docroot
-ddev config --project-type=drupal --docroot=html --php-version=8.3
+ddev config --project-type=drupal --docroot=html --php-version=8.2
 ```
 
 This creates `.ddev/config.yaml`. Verify the configuration:
@@ -230,7 +230,7 @@ You should see:
 name: opensocial
 type: drupal
 docroot: html
-php_version: "8.3"
+php_version: "8.2"
 ...
 ```
 
@@ -309,7 +309,7 @@ cd ~/projects
 mkdir opensocial && cd opensocial
 
 # Configure DDEV WITHOUT creating docroot yet
-ddev config --project-type=drupal --docroot=html --php-version=8.3
+ddev config --project-type=drupal --docroot=html --php-version=8.2
 ```
 
 #### Step 2: Increase PHP Memory
@@ -898,7 +898,7 @@ ddev launch /admin/structure/types/add-field
 | Drupal | 10.x, 11.x |
 | OpenSocial | 12.x (current stable: ~12.4.0) |
 | Drush | 12.x, 13.x |
-| PHP | 8.2, 8.3 |
+| PHP | 8.2 |
 | MariaDB | 10.6, 10.11, 11.4 |
 
 ### Primary Sources
